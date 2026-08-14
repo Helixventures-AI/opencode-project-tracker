@@ -194,6 +194,12 @@ Anything the plugin skips is now visible instead of silent:
 
 Shown as amber ⚠️ lines under the header and in the **⚠️ اخطارها و موارد نادیدهشده** section of `report.md` (last 5, capped at 20).
 
+## Data safety & inactivity (v1.3.5)
+
+- **Corrupt state protection** — if `state.json` is ever unreadable, it is **not silently reset**: the file is renamed to `state.json.corrupt-<timestamp>` (backup), a warning is recorded, and counting restarts cleanly.
+- **Milestones on imported data** — importing an existing project's progress (auto-seed) now fires the 25/50/75/100% milestones right away, even before any new tool call.
+- **Idle detection** — if the project has been inactive for 2+ hours, the dashboard shows a ⏸️ recommendation ("پروژه از N ساعت پیش بدون فعالیت است") to resume the active phase. `updated_at` now reflects real activity (tool calls, notes, user messages), not file flushes.
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
