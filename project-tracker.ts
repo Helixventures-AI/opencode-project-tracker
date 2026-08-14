@@ -20,6 +20,9 @@
  *    - نقطه‌های عطف (۲۵/۵۰/۷۵/۱۰۰٪) و نمودار روند با خط پیش‌بینی
  *    - لاگ آخرین فعالیت‌ها + گزارش Markdown + مقایسهٔ چند پروژه
  *
+ *  امکانات نسخهٔ ۱.۲:
+ *    - دکمهٔ تغییر زبان (فارسی / English) در داشبورد با ذخیرهٔ انتخاب کاربر
+ *
  *  امنیت: هیچ داده‌ای خارج از سیستم ارسال نمی‌شود؛ همه‌چیز محلی است.
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -278,7 +281,7 @@ ${state.log.slice(0, 10).map((e) => `- \`${e.tool}\` → ${phases.find((p) => p.
 `
 }
 
-/* ── تولید فایل HTML داشبورد ───────────────────────────────────────────── */
+/* ── تولید فایل HTML داشبورد (دوزبانه) ─────────────────────────────────── */
 function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects: any[]): string {
   const totalGoal = phases.reduce((s, p) => s + p.goal, 0)
   const totalScore = phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
@@ -288,29 +291,36 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const mm = minutes % 60
   const duration = hh > 0 ? `${hh}h ${mm}m` : `${mm}m`
   const eta = state.eta_minutes != null ? `${Math.floor(state.eta_minutes / 60)}h ${state.eta_minutes % 60}m` : "—"
+  const nowMs = Date.now()
+
+  const subEn = `Live update · ${new Date(state.updated_at).toLocaleString("en-US")} · ${duration} elapsed`
+  const subFa = `به‌روزرسانی زنده · ${new Date(state.updated_at).toLocaleString("fa-IR")} · ${duration} زمان سپری‌شده`
+
+  const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
 
   const phasesHtml = phases.map((p, i) => {
     const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
     const pct = clampPct((ps.score / p.goal) * 100)
-    const done = pct >= 100
-    const status = done ? "done" : ps.active ? "active" : "idle"
-    const statusLabel = done ? "✓" : ps.active ? "●" : "○"
-    const statusText = done ? "Complete" : ps.active ? "Active" : "Pending"
+    const status = pct >= 100 ? "done" : ps.active ? "active" : "idle"
+    const label = pct >= 100 ? "✓" : ps.active ? "●" : "○"
+    const statusEn = `${label} ${status === "done" ? "Complete" : status === "active" ? "Active" : "Pending"}`
+    const statusFa = `${label} ${faStatus[status]}`
+    const metaEn = `${ps.score} / ${p.goal} pts · ${ps.events} ops`
+    const metaFa = `${ps.score} از ${p.goal} امتیاز · ${ps.events} عملیات`
     return `
     <div class="phase-card" style="--acc:${p.color}">
       <div class="phase-head">
         <span class="step">${i + 1}</span>
         <div class="phase-title">
-          <span class="ph-en">${p.en}</span>
-          <span class="ph-fa">${p.fa}</span>
+          <span class="ph-name" data-en="${p.en}" data-fa="${p.fa}">${p.fa}</span>
         </div>
-        <span class="status-chip ${status}">${statusLabel} ${statusText}</span>
+        <span class="status-chip ${status}" data-en="${statusEn}" data-fa="${statusFa}">${statusFa}</span>
       </div>
-      <div class="phase-desc">${p.desc_fa} — ${p.desc_en}</div>
+      <div class="phase-desc" data-en="${p.desc_en}" data-fa="${p.desc_fa}">${p.desc_fa}</div>
       <div class="bar"><div class="bar-fill" style="width:${pct}%;background:${p.color}"></div></div>
       <div class="phase-meta">
         <span class="pct">${pct}%</span>
-        <span class="score">${ps.score} / ${p.goal} pts · ${ps.events} ops</span>
+        <span class="score" data-en="${metaEn}" data-fa="${metaFa}">${metaFa}</span>
       </div>
     </div>`
   }).join("")
@@ -350,30 +360,46 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
 
   const milestonesHtml = state.milestones.map((m) =>
     `<span class="ms-chip" style="--acc:${m >= 100 ? "#34d399" : m >= 75 ? "#a78bfa" : m >= 50 ? "#38bdf8" : "#fbbf24"}">🏆 ${m}%</span>`
-  ).join("") || `<span class="ms-chip idle">🏁 هنوز نقطه‌ای نرسیده</span>`
+  ).join("") || `<span class="ms-chip idle" data-en="🏁 No milestones yet" data-fa="🏁 هنوز نقطه‌ای نرسیده">🏁 هنوز نقطه‌ای نرسیده</span>`
 
   const logHtml = state.log.slice(0, 8).map((e) => {
     const p = phases.find((x) => x.key === e.phase)
+    const rel = relTime(e.t, nowMs)
     return `
     <div class="log-row">
       <span class="dot" style="background:${p?.color || "#888"}"></span>
       <span class="log-tool">${e.tool}</span>
-      <span class="log-phase">${p?.en || e.phase}</span>
+      <span class="log-phase" data-en="${p?.en || e.phase}" data-fa="${p?.fa || e.phase}">${p?.fa || e.phase}</span>
       <span class="log-w">+${e.weight}</span>
-      <span class="log-t">${relTime(e.t, state.updated_at)} ago</span>
+      <span class="log-t" data-en="${rel} ago" data-fa="${rel} قبل">${rel} قبل</span>
     </div>`
-  }).join("") || `<div class="log-row muted">هنوز فعالیتی ثبت نشده</div>`
+  }).join("") || `<div class="log-row muted" data-en="No activity recorded yet" data-fa="هنوز فعالیتی ثبت نشده">هنوز فعالیتی ثبت نشده</div>`
 
   const othersHtml = otherProjects.filter((o) => o.id !== state.project).slice(0, 5).map((o) =>
     `<div class="other-row"><span>${o.id}</span><div class="bar mini"><div class="bar-fill" style="width:${o.pct}%;background:#22d3ee"></div></div><b>${o.pct}%</b></div>`
-  ).join("") || `<div class="log-row muted">فقط این پروژه پیگیری می‌شود</div>`
+  ).join("") || `<div class="log-row muted" data-en="Only this project is tracked" data-fa="فقط این پروژه پیگیری می‌شود">فقط این پروژه پیگیری می‌شود</div>`
 
-  const stat = (label: string, fa: string, val: string, color: string) => `
+  const t = state.totals
+  const stats: [string, string, string, string][] = [
+    ["Tool calls", "عملیات ابزار", String(t.tool_calls), "#22d3ee"],
+    ["Edits", "ویرایش‌ها", String(t.edits), "#34d399"],
+    ["Test runs", "اجرای تست", String(t.tests), "#fbbf24"],
+    ["Deploy ops", "استقرار", String(t.deploys), "#a78bfa"],
+    ["Docs ops", "مستندسازی", String(t.docs), "#f472b6"],
+    ["Commits", "کامیت", String(t.commits), "#fb7185"],
+    ["Messages", "پیام‌های چت", String(t.messages), "#818cf8"],
+    ["Sessions", "نشست‌ها", String(t.sessions), "#38bdf8"],
+  ]
+  const statsHtml = stats.map(([en, fa, val, color]) => `
     <div class="stat" style="--acc:${color}">
       <span class="stat-val">${val}</span>
-      <span class="stat-label">${label}</span>
+      <span class="stat-label" data-en="${en}" data-fa="${fa}">${fa}</span>
       <span class="stat-fa">${fa}</span>
-    </div>`
+    </div>`).join("")
+
+  const descLines = phases.map((p) =>
+    `<div data-html-en="<b style=&quot;color:${p.color}&quot;>${p.en}</b>: ${p.desc_en}" data-html-fa="<b style=&quot;color:${p.color}&quot;>${p.fa}</b>: ${p.desc_fa}"><b style="color:${p.color}">${p.fa}</b>: ${p.desc_fa}</div>`
+  ).join("")
 
   return `<!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -436,8 +462,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .phase-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .step{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;background:var(--acc);color:#0b0f1f}
   .phase-title{flex:1;display:flex;flex-direction:column}
-  .ph-en{font-size:14px;font-weight:600}
-  .ph-fa{font-size:12px;color:var(--muted);direction:rtl}
+  .ph-name{font-size:14px;font-weight:600}
   .status-chip{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--stroke)}
   .status-chip.done{color:#7df3c8;border-color:rgba(125,243,200,.35);background:rgba(125,243,200,.08)}
   .status-chip.active{color:#fde68a;border-color:rgba(253,230,138,.35);background:rgba(253,230,138,.08)}
@@ -463,18 +488,20 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .btn{background:var(--grad);border:none;color:#0b0f1f;font-weight:700;padding:8px 18px;border-radius:999px;cursor:pointer;font-size:12.5px}
   .btn.ghost{background:transparent;border:1px solid var(--stroke);color:var(--txt);font-weight:500}
   .tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .lang-btn{font-size:13px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div>
-      <h1>📊 Project Tracker — ${state.project}</h1>
-      <div class="sub">به‌روزرسانی زنده · ${new Date(state.updated_at).toLocaleString("fa-IR")} · ${duration} elapsed</div>
+      <h1 data-en="📊 Project Tracker — ${state.project}" data-fa="📊 ردیاب پروژه — ${state.project}">📊 ردیاب پروژه — ${state.project}</h1>
+      <div class="sub" data-en="${subEn}" data-fa="${subFa}">${subFa}</div>
     </div>
     <div class="pills">
-      <div class="pill">رشد: <b>${state.growth_rate_per_hour} pts/h</b></div>
-      <div class="pill">پیش‌بینی اتمام: <b class="eta">${eta}</b></div>
+      <button id="langBtn" class="btn ghost lang-btn" onclick="toggleLang()">English</button>
+      <div class="pill">🌱 <span data-en="Growth: ${state.growth_rate_per_hour} pts/h" data-fa="رشد: ${state.growth_rate_per_hour} امتیاز/ساعت">رشد: ${state.growth_rate_per_hour} امتیاز/ساعت</span></div>
+      <div class="pill">⏱️ <span class="eta" data-en="ETA: ${eta}" data-fa="پیش‌بینی اتمام: ${eta}">پیش‌بینی اتمام: ${eta}</span></div>
     </div>
   </header>
 
@@ -496,26 +523,26 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
               <circle class="ring-bg" cx="75" cy="75" r="${ringR}"/>
               <circle class="ring-fg" cx="75" cy="75" r="${ringR}"/>
             </svg>
-            <div class="ring-txt"><b>${overall}%</b><span>overall progress</span></div>
+            <div class="ring-txt"><b>${overall}%</b><span data-en="overall progress" data-fa="پیشرفت کلی">پیشرفت کلی</span></div>
           </div>
           <div class="gauge">
-            <b>${totalScore}</b> امتیاز از ${totalGoal} هدف فازها<br>
-            ${state.totals.tool_calls} عملیات ابزار · ${state.totals.tests} اجرای تست<br>
-            ${state.totals.deploys} عملیات استقرار · ${state.totals.commits} کامیت
+            <div data-html-en="<b>${totalScore}</b> points of ${totalGoal} phase goals" data-html-fa="<b>${totalScore}</b> امتیاز از ${totalGoal} هدف فازها"><b>${totalScore}</b> امتیاز از ${totalGoal} هدف فازها</div>
+            <div data-en="${t.tool_calls} tool ops · ${t.tests} test runs" data-fa="${t.tool_calls} عملیات ابزار · ${t.tests} اجرای تست">${t.tool_calls} عملیات ابزار · ${t.tests} اجرای تست</div>
+            <div data-en="${t.deploys} deploy ops · ${t.commits} commits" data-fa="${t.deploys} عملیات استقرار · ${t.commits} کامیت">${t.deploys} عملیات استقرار · ${t.commits} کامیت</div>
           </div>
         </div>
         <div class="ms-row">${milestonesHtml}</div>
         <div class="tools">
-          <button class="btn" onclick="document.getElementById('desc').hidden=!document.getElementById('desc').hidden">تشریح مراحل</button>
-          <button class="btn ghost" onclick="window.print()">چاپ / PDF</button>
+          <button class="btn" onclick="document.getElementById('desc').hidden=!document.getElementById('desc').hidden" data-en="Phase descriptions" data-fa="تشریح مراحل">تشریح مراحل</button>
+          <button class="btn ghost" onclick="window.print()" data-en="Print / PDF" data-fa="چاپ / PDF">چاپ / PDF</button>
         </div>
         <div id="desc" hidden style="margin-top:12px;font-size:12px;color:var(--muted);direction:rtl;line-height:2">
-          ${phases.map((p) => `<b style="color:${p.color}">${p.fa}</b>: ${p.desc_fa}`).join("<br>")}
+          ${descLines}
         </div>
       </div>
 
       <div class="card chart">
-        <div style="font-size:13px;margin-bottom:6px">رشد امتیاز در طول زمان <span style="color:var(--muted)">(—: روند واقعی · —: پیش‌بینی)</span></div>
+        <div style="font-size:13px;margin-bottom:6px" data-en="Score growth over time (— actual · — projected)" data-fa="رشد امتیاز در طول زمان (— روند واقعی · — پیش‌بینی)">رشد امتیاز در طول زمان (— روند واقعی · — پیش‌بینی)</div>
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
           ${[0.25, 0.5, 0.75].map((f) => `<line class="chart-grid" x1="0" y1="${H * f}" x2="${W}" y2="${H * f}"/>`).join("")}
           <path class="chart-area" d="${area}"/>
@@ -525,35 +552,50 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
       </div>
 
       <div class="card" style="margin-top:18px">
-        <div style="font-size:13px;margin-bottom:8px">🕘 آخرین فعالیت‌ها <span style="color:var(--muted)">(recent activity)</span></div>
+        <div style="font-size:13px;margin-bottom:8px" data-en="🕘 Recent activity" data-fa="🕘 آخرین فعالیت‌ها">🕘 آخرین فعالیت‌ها</div>
         ${logHtml}
       </div>
     </div>
 
     <div>
       <div class="card" style="margin-bottom:18px">
-        <div style="font-size:15px;font-weight:600;margin-bottom:14px">🧭 فازهای پروژه</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:14px" data-en="🧭 Project phases" data-fa="🧭 فازهای پروژه">🧭 فازهای پروژه</div>
         ${phasesHtml}
       </div>
-      <div class="stats">
-        ${stat("Tool calls", "عملیات ابزار", String(state.totals.tool_calls), "#22d3ee")}
-        ${stat("Edits", "ویرایش‌ها", String(state.totals.edits), "#34d399")}
-        ${stat("Test runs", "اجرای تست", String(state.totals.tests), "#fbbf24")}
-        ${stat("Deploy ops", "استقرار", String(state.totals.deploys), "#a78bfa")}
-        ${stat("Docs ops", "مستندسازی", String(state.totals.docs), "#f472b6")}
-        ${stat("Commits", "کامیت", String(state.totals.commits), "#fb7185")}
-        ${stat("Messages", "پیام‌های چت", String(state.totals.messages), "#818cf8")}
-        ${stat("Sessions", "نشست‌ها", String(state.totals.sessions), "#38bdf8")}
-      </div>
+      <div class="stats">${statsHtml}</div>
       <div class="card" style="margin-top:18px">
-        <div style="font-size:13px;margin-bottom:8px">🗂️ سایر پروژه‌های پیگیری‌شده <span style="color:var(--muted)">(other projects)</span></div>
+        <div style="font-size:13px;margin-bottom:8px" data-en="🗂️ Other tracked projects" data-fa="🗂️ سایر پروژه‌های پیگیری‌شده">🗂️ سایر پروژه‌های پیگیری‌شده</div>
         ${othersHtml}
       </div>
     </div>
   </div>
 
-  <footer>opencode Project Tracker v1.1 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.2 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
+<script>
+var I18N = {
+  title: { en: "📊 Project Tracker — ${state.project}", fa: "📊 ردیاب پروژه — ${state.project}" }
+};
+var lang = 'fa';
+try { lang = localStorage.getItem('pt_lang') || 'fa'; } catch (e) { lang = 'fa'; }
+function apply() {
+  document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+  document.documentElement.lang = lang === 'fa' ? 'fa' : 'en';
+  var els = document.querySelectorAll('[data-en]');
+  for (var i = 0; i < els.length; i++) { els[i].textContent = lang === 'fa' ? els[i].getAttribute('data-fa') : els[i].getAttribute('data-en'); }
+  var htmlEls = document.querySelectorAll('[data-html-en]');
+  for (var j = 0; j < htmlEls.length; j++) { htmlEls[j].innerHTML = lang === 'fa' ? htmlEls[j].getAttribute('data-html-fa') : htmlEls[j].getAttribute('data-html-en'); }
+  var faEls = document.querySelectorAll('.stat-fa');
+  for (var k = 0; k < faEls.length; k++) { faEls[k].style.display = lang === 'fa' ? '' : 'none'; }
+  document.getElementById('langBtn').textContent = lang === 'fa' ? 'English' : 'فارسی';
+}
+function toggleLang() {
+  lang = lang === 'fa' ? 'en' : 'fa';
+  try { localStorage.setItem('pt_lang', lang); } catch (e) {}
+  apply();
+}
+apply();
+</script>
 </body>
 </html>`
 }

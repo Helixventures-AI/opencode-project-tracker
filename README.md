@@ -9,6 +9,7 @@ Tracks every operation (edit, test, deploy, docs, commit, ...) during a coding s
 ## Features
 
 - 🧭 **7 standard phases** — Research & Planning, Architecture & Setup, Implementation, Testing & QA, Documentation, Deployment & DevOps, Review & Delivery (each with Persian + English descriptions)
+- 🌐 **Bilingual dashboard** — one-click language toggle (فارسی / English) that switches every label, phase name and description; your choice is remembered
 - 📊 **Live dashboard** — `report.html`: overall progress ring, per-phase progress bars with percentages, score-over-time growth chart **with a dashed projection line**, recent-activity feed, milestone badges (25/50/75/100%), stat cards (tool calls, tests, deploys, commits, sessions...)
 - ⚡ **Growth rate & ETA** — points per hour plus a **predicted time-to-completion** estimate
 - 🏆 **Milestones** — auto-recorded progress thresholds with badge chips
