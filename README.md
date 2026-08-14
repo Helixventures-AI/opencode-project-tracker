@@ -109,6 +109,18 @@ If your project has a different workflow, replace the 7 default phases entirely 
 - `remap` — map the built-in classification keys (`research`, `setup`, `coding`, `testing`, `docs`, `deploy`, `delivery`) to your phase keys
 - `default_phase` — where unmatched operations go (default: first phase)
 
+## Progress notes (bugs, errors, successes)
+
+Every operation gets an automatic **status** — ✅ success / ❌ error / ⚠️ warning — with a short description of what actually happened (test output, file touched, error text). Totals are shown on the dashboard and in `report.md`.
+
+You can also record explicit notes — e.g. a bug found, an error fixed, a successful deploy — by asking the assistant to call the built-in `tracker_note` tool:
+
+```
+Use tracker_note with text: "fixed auth bug — token expiry" and type: "success"
+```
+
+Types: `success`, `error`, `warning`, `info`. Notes appear instantly in the activity log and count toward the error/success totals.
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
