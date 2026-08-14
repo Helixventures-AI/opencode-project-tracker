@@ -139,6 +139,37 @@ Use tracker_note with text: "split the big query into two to fix the timeout" an
 
 Types: `suggestion`, `solution`, `recommendation` (also visible as a stat card). The same list is included in `report.md`.
 
+## Automatic import of existing progress
+
+Starting a tracker on an **existing project**? No more empty dashboard. The plugin automatically scans the project for progress files and imports completed steps into the phase scores:
+
+- root level: `USL_PROGRESS.md`, `PROGRESS.md`, `progress*.json`, `ROADMAP.md`, `roadmap*.json`
+- subfolders: `reports/`, `docs/`, `planning/`, `plans/`, `progress/` (2 levels deep)
+
+**Supported formats (auto-detected, no configuration needed):**
+
+1. JSON array of steps:
+```json
+[
+  { "id": "s1", "name": "schema migration 011", "phase": "testing", "status": "committed", "score": 2 },
+  { "id": "s2", "name": "GDPR erasure endpoint", "phase": "coding", "status": "done" },
+  { "id": "s3", "name": "audit retention docs", "phase": "docs", "status": "todo" }
+]
+```
+Statuses `done`/`complete`/`committed`/`ok`/`شده` score points; `todo` items register the phase without points. Phase field auto-detected (`phase`/`fase`/`stage`/`category`/`area`/`key`), score field auto-detected (`score`/`points`/`weight`/`value`, default 1).
+
+2. JSON map: `{ "phases": { "coding": 80, "testing": 30 } }` or plain `{ "coding": 80 }`.
+
+3. Markdown checklist with `## Phase` headings (or `(phase: key)` inline):
+```md
+## Testing
+- [x] run integration suite
+- [ ] add coverage for privacy module
+- [x] smoke flow (phase: deploy)
+```
+
+**Behavior:** imports are idempotent — restarting opencode never double-counts (tracked by file mtime + item ids); when a progress file changes, new steps are imported automatically. The header shows `📥 واردشده: N گام از <files>`, a stat card counts imported steps, and the chart starts from the imported total. Disable with `"auto_seed": false` in `config.json`.
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
