@@ -1,28 +1,25 @@
 # opencode-project-tracker
 
-Real-time project progress tracker plugin for [opencode](https://opencode.ai).
+Real-time project progress tracker **for AI coding tools** — opencode, Claude Code, any MCP-capable IDE (Cursor, Windsurf, Cline, Claude Desktop, VS Code Copilot, ...) and web AI platforms (Replit, Lovable, Bolt, v0) via a file protocol.
 
 Tracks every operation (edit, test, deploy, docs, commit, ...) during a coding session, maps it to one of **7 project phases**, computes per-phase and overall **percentages**, a **growth rate**, and renders a **modern HTML dashboard** with SVG charts — fully **local, no data leaves your machine**.
 
-![dashboard](https://img.shields.io/badge/dashboard-dark%20theme-8b5cf6) ![platform](https://img.shields.io/badge/platform-win%20%7C%20mac%20%7C%20linux-22d3ee) ![license](https://img.shields.io/badge/license-MIT-green)
+![dashboard](https://img.shields.io/badge/dashboard-dark%20theme-8b5cf6) ![platform](https://img.shields.io/badge/platform-opencode%20%7C%20claude%20%7C%20mcp%20%7C%20cli%20%7C%20web-22d3ee) ![license](https://img.shields.io/badge/license-MIT-green)
 
-## Features
+## One engine, four adapters
 
-- 🧭 **7 standard phases** — Research & Planning, Architecture & Setup, Implementation, Testing & QA, Documentation, Deployment & DevOps, Review & Delivery (each with Persian + English descriptions)
-- 🌐 **Bilingual dashboard** — one-click language toggle (فارسی / English) that switches every label, phase name and description; your choice is remembered
-- 📊 **Live dashboard** — `report.html`: overall progress ring, per-phase progress bars with percentages, score-over-time growth chart **with a dashed projection line**, recent-activity feed, milestone badges (25/50/75/100%), stat cards (tool calls, tests, deploys, commits, sessions...)
-- ⚡ **Growth rate & ETA** — points per hour plus a **predicted time-to-completion** estimate
-- 🏆 **Milestones** — auto-recorded progress thresholds with badge chips
-- 🗂️ **Multi-project comparison** — a global registry (`~/.config/opencode/project-tracker/projects.json`) tracks all projects you work on; the dashboard shows how they compare
-- 📄 **Markdown report** — `report.md` generated alongside the HTML dashboard (ready for docs/commits)
-- ⚙️ **Configurable** — `config.json` to customize phase goals, tool weights and phase names (per-project or global)
-- 🗃️ **Persistence** — state survives restarts, accumulates across sessions in `<project>/.opencode/project-tracker/`
-- 🔒 **100% local** — no network, no telemetry, no external CDNs (inline CSS/SVG)
-- 🌍 **Cross-platform** — Windows / macOS / Linux
+| Adapter | Where it runs | How it tracks |
+|---|---|---|
+| **opencode plugin** | opencode | full auto — every tool call + chat + sessions |
+| **Claude Code hooks** | Claude Code | full auto — `PostToolUse` / `UserPromptSubmit` / `SessionStart` / `Stop` |
+| **MCP server** | Cursor, Windsurf, Cline, Claude Desktop, VS Code Copilot, ... | tools: `tracker_note`, `tracker_summary`, `tracker_open`, `tracker_report`, `tracker_init`, `tracker_list` |
+| **CLI + file protocol** | any terminal + web AI platforms | `pt init / status / note / report / open / list` — web agents update `progress.json` / `USL_PROGRESS.md`, you regenerate the dashboard |
+
+All adapters share the same **core engine** (`core/tracker-core.mjs`) and the same state files, so the same project can be tracked from multiple tools without conflicts.
 
 ## Install
 
-### Option A — local (any single machine)
+### Option A — opencode (plugin)
 
 Put the plugin file in the plugin directory and restart opencode:
 
@@ -33,7 +30,37 @@ Optionally add the `/tracker` command (shows a text summary in chat + opens the 
 
 - `.opencode/command/tracker.md` or `~/.config/opencode/command/tracker.md`
 
-### Option B — npm (opencode.json)
+### Option B — MCP server (Cursor, Windsurf, Cline, Claude Desktop, Copilot, ...)
+
+Register `mcp/server.mjs` as a **stdio MCP server** (zero dependencies — no npm install):
+
+- **Cursor**: Settings → MCP → Add → Command: `node /path/to/repo/mcp/server.mjs`
+- **Windsurf**: Settings → MCP → Add → same command
+- **Cline** (VS Code): MCP Servers → Add → stdio → `node /path/to/repo/mcp/server.mjs`
+- **Claude Desktop**: `claude_desktop_config.json` → `"mcpServers": { "project-tracker": { "command": "node", "args": ["/path/to/repo/mcp/server.mjs"] } }`
+
+Then ask your AI to call the tools (`tracker_summary`, `tracker_note`, `tracker_open`, ...). The server uses the working directory as the project; pass `project: "name-or-path-fragment"` to target any tracked project.
+
+### Option C — Claude Code (hooks)
+
+```sh
+node hooks/claude-code/install.mjs            # global (~/.claude/settings.json)
+node hooks/claude-code/install.mjs --project # this project only (.claude/settings.json)
+```
+
+Restart Claude Code. Every tool call is auto-recorded; dashboard via `node cli/pt.mjs open`.
+
+### Option D — Web AI platforms (Replit, Lovable, Bolt, v0, ...)
+
+No plugin needed — the agent updates a progress file, you generate the dashboard locally:
+
+1. Paste `web/AGENT_INSTRUCTIONS.md` into your web agent's instructions.
+2. Work with the agent (it maintains `USL_PROGRESS.md` / `progress.json`).
+3. On your machine: `node cli/pt.mjs report` → then `node cli/pt.mjs open`.
+
+See `web/README.md` for details.
+
+### Option E — npm (opencode.json)
 
 ```json
 {

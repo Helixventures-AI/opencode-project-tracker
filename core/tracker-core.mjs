@@ -1,159 +1,47 @@
-﻿/**
- * ─────────────────────────────────────────────────────────────────────────────
- *  opencode Project Tracker Plugin — ردیاب زندهٔ مراحل و پیشرفت پروژه
- * ─────────────────────────────────────────────────────────────────────────────
- *  نصب (پس از نصب، opencode را ببندید و دوباره اجرا کنید):
- *    - پروژه‌ای:  .opencode/plugins/project-tracker.ts
- *    - سراسری:    ~/.config/opencode/plugins/project-tracker.ts
- *
- *  کارکرد:
- *    - هر عملیات ابزار (edit/write/bash/test/deploy/doc/...) به یکی از ۷ فاز
- *      پروژه نگاشت می‌شود و امتیاز می‌گیرد
- *    - وضعیت (state.json) + داشبورد گرافیکی (report.html) + گزارش متنی
- *      (report.md) به‌صورت زنده در <project>/.opencode/project-tracker/ تولید می‌شود
- *    - کامند `/tracker` (یا `/t`) خلاصهٔ عددی و درصدی را در چت نشان می‌دهد و
- *      داشبورد را در مرورگر باز می‌کند
- *
- *  امکانات نسخهٔ ۱.۱:
- *    - پیکربندی با config.json (اهداف، وزن‌ها، نام فازها) — پروژه‌ای یا سراسری
- *    - پیش‌بینی زمان اتمام (ETA) بر اساس نرخ رشد
- *    - نقطه‌های عطف (۲۵/۵۰/۷۵/۱۰۰٪) و نمودار روند با خط پیش‌بینی
- *    - لاگ آخرین فعالیت‌ها + گزارش Markdown + مقایسهٔ چند پروژه
- *
- *  امکانات نسخهٔ ۱.۲:
- *    - دکمهٔ تغییر زبان (فارسی / English) در داشبورد با ذخیرهٔ انتخاب کاربر
- *
- *  امکانات نسخهٔ ۱.۳:
- *    - فهرست فازهای کاملاً سفارشی (هر تعداد) با remap و default_phase
- *    - وضعیت خودکار هر عملیات (موفق/خطا/هشدار) + شرح از خروجی ابزار
- *    - ابزار tracker_note برای ثبت باگ‌ها، ارورها، موفقیت‌ها، پیشنهادها و راهکارها
- *    - بخش توصیه‌ها و راهکارها: تحلیل خودکار خطاها + پیشنهادهای ثبت‌شده
- *    - واردسازی خودکار پیشرفت موجود: جستجوی فایل‌های progress/roadmap
- *      (مثل USL_PROGRESS.md و reports/progress-*.json) در ریشهٔ پروژه و
- *      افزودن گام‌های انجام‌شده به امتیاز فازها — بدون نیاز به پیکربندی
- *
- *  امنیت: هیچ داده‌ای خارج از سیستم ارسال نمی‌شود؛ همه‌چیز محلی است.
- * ─────────────────────────────────────────────────────────────────────────────
+/**
+ * opencode-project-tracker — core engine (platform-agnostic)
+ * Shared by: opencode plugin, MCP server, Claude Code hooks, CLI, web file-protocol.
+ * Zero npm dependencies — Node.js >= 18, ESM.
  */
-
-import { type Plugin, tool } from "@opencode-ai/plugin"
-import { exec } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { exec } from "node:child_process"
 
-/* جلوگیری از بارگذاری دوباره (اگر پلاگین هم در پوشهٔ سراسری و هم محلی باشد) */
-const G = globalThis as any
-const isPrimary = !G.__projectTrackerLoaded
-G.__projectTrackerLoaded = true
+export const VERSION = "1.4.0"
 
-/* ── فازهای استاندارد هر پروژه ─────────────────────────────────────────── */
-interface PhaseDef {
-  key: string
-  en: string
-  fa: string
-  desc_en: string
-  desc_fa: string
-  goal: number
-  color: string
-}
-
-const PHASE_DEFAULTS: PhaseDef[] = [
-  {
-    key: "research",
-    en: "Research & Planning",
-    fa: "پژوهش و برنامه‌ریزی",
-    desc_en: "Requirements gathering, feasibility, architecture decisions, scope and roadmap.",
-    desc_fa: "جمع‌آوری نیازمندی‌ها، امکان‌سنجی، تصمیم‌های معماری، دامنه و نقشهٔ راه.",
-    goal: 15, color: "#38bdf8",
-  },
-  {
-    key: "setup",
-    en: "Architecture & Setup",
-    fa: "معماری و راه‌اندازی",
-    desc_en: "Project scaffolding, repo init, dependency configuration, CI skeleton.",
-    desc_fa: "اسکلت پروژه، مقداردهی مخزن، تنظیم وابستگی‌ها، اسکلت CI.",
-    goal: 15, color: "#818cf8",
-  },
-  {
-    key: "coding",
-    en: "Implementation",
-    fa: "پیاده‌سازی کد",
-    desc_en: "Feature implementation, refactoring, bug fixes, business logic.",
-    desc_fa: "پیاده‌سازی امکانات، بازآرایی، رفع باگ، منطق کسب‌وکار.",
-    goal: 60, color: "#34d399",
-  },
-  {
-    key: "testing",
-    en: "Testing & QA",
-    fa: "تست و تضمین کیفیت",
-    desc_en: "Unit, integration, E2E, load and security tests; verification runs.",
-    desc_fa: "تست واحد، یکپارچه‌سازی، E2E، بار و امنیت؛ اجرای راستی‌آزمایی.",
-    goal: 30, color: "#fbbf24",
-  },
-  {
-    key: "docs",
-    en: "Documentation",
-    fa: "مستندسازی",
-    desc_en: "README, guides, architecture docs, API references, changelog.",
-    desc_fa: "راهنماها، مستندات معماری، مرجع API، تغییرات.",
-    goal: 15, color: "#f472b6",
-  },
-  {
-    key: "deploy",
-    en: "Deployment & DevOps",
-    fa: "استقرار و DevOps",
-    desc_en: "Docker, Kubernetes, Terraform, CI/CD, infra provisioning, go-live.",
-    desc_fa: "داکر، کوبرنتیز، ترفرم، CI/CD، زیرساخت و عرضهٔ نهایی.",
-    goal: 20, color: "#a78bfa",
-  },
-  {
-    key: "delivery",
-    en: "Review & Delivery",
-    fa: "بازبینی و تحویل",
-    desc_en: "Code review, commits, PRs, release notes, handover.",
-    desc_fa: "بازبینی کد، کامیت‌ها، PR، یادداشت انتشار و تحویل.",
-    goal: 10, color: "#fb7185",
-  },
+export const PHASE_DEFAULTS = [
+  { key: "research", en: "Research & Planning", fa: "پژوهش و برنامه‌ریزی", desc_en: "Requirements gathering, feasibility, architecture decisions, scope and roadmap.", desc_fa: "جمع‌آوری نیازمندی‌ها، امکان‌سنجی، تصمیم‌های معماری، دامنه و نقشهٔ راه.", goal: 15, color: "#38bdf8" },
+  { key: "setup", en: "Architecture & Setup", fa: "معماری و راه‌اندازی", desc_en: "Project scaffolding, repo init, dependency configuration, CI skeleton.", desc_fa: "اسکلت پروژه، مقداردهی مخزن، تنظیم وابستگی‌ها، اسکلت CI.", goal: 15, color: "#818cf8" },
+  { key: "coding", en: "Implementation", fa: "پیاده‌سازی کد", desc_en: "Feature implementation, refactoring, bug fixes, business logic.", desc_fa: "پیاده‌سازی امکانات، بازآرایی، رفع باگ، منطق کسب‌وکار.", goal: 60, color: "#34d399" },
+  { key: "testing", en: "Testing & QA", fa: "تست و تضمین کیفیت", desc_en: "Unit, integration, E2E, load and security tests; verification runs.", desc_fa: "تست واحد، یکپارچه‌سازی، E2E، بار و امنیت؛ اجرای راستی‌آزمایی.", goal: 30, color: "#fbbf24" },
+  { key: "docs", en: "Documentation", fa: "مستندسازی", desc_en: "README, guides, architecture docs, API references, changelog.", desc_fa: "راهنماها، مستندات معماری، مرجع API، تغییرات.", goal: 15, color: "#f472b6" },
+  { key: "deploy", en: "Deployment & DevOps", fa: "استقرار و DevOps", desc_en: "Docker, Kubernetes, Terraform, CI/CD, infra provisioning, go-live.", desc_fa: "داکر، کوبرنتیز، ترفرم، CI/CD، زیرساخت و عرضهٔ نهایی.", goal: 20, color: "#a78bfa" },
+  { key: "delivery", en: "Review & Delivery", fa: "بازبینی و تحویل", desc_en: "Code review, commits, PRs, release notes, handover.", desc_fa: "بازبینی کد، کامیت‌ها، PR، یادداشت انتشار و تحویل.", goal: 10, color: "#fb7185" },
 ]
 
+export const PALETTE = ["#22d3ee", "#34d399", "#fbbf24", "#a78bfa", "#f472b6", "#fb7185", "#38bdf8", "#818cf8", "#a3e635", "#f59e0b"]
+
 /* ── پیکربندی ──────────────────────────────────────────────────────────── */
-interface TrackerConfig {
-  goals: Record<string, number>
-  weights: Record<string, number>
-  names: Record<string, { en: string; fa: string }>
-  phases?: Array<Partial<PhaseDef> & { key: string }>
-  remap?: Record<string, string>
-  default_phase?: string
-  auto_seed?: boolean
-}
-
-const DEFAULT_CONFIG: TrackerConfig = { goals: {}, weights: {}, names: {} }
-
-const PALETTE = ["#38bdf8", "#818cf8", "#34d399", "#fbbf24", "#f472b6", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#4ade80"]
-
-function loadConfig(...files: string[]): TrackerConfig {
-  const cfg: TrackerConfig = { goals: {}, weights: {}, names: {} }
-  for (const f of files) {
+export function loadConfig(globalCfgFile, projectCfgFile) {
+  const cfg = { goals: {}, weights: {}, names: {}, phases: [], remap: {}, default_phase: undefined }
+  for (const f of [globalCfgFile, projectCfgFile]) {
     try {
-      if (!fs.existsSync(f)) continue
-      const raw = JSON.parse(fs.readFileSync(f, "utf8")) || {}
-      if (raw.goals && typeof raw.goals === "object") for (const [k, v] of Object.entries(raw.goals)) if (typeof v === "number") cfg.goals[k] = v
-      if (raw.weights && typeof raw.weights === "object") for (const [k, v] of Object.entries(raw.weights)) if (typeof v === "number") cfg.weights[k] = v
-      if (raw.names && typeof raw.names === "object") for (const [k, v] of Object.entries(raw.names)) if (v && typeof v === "object" && typeof (v as any).en === "string") cfg.names[k] = { en: (v as any).en, fa: (v as any).fa }
-      if (raw.remap && typeof raw.remap === "object") cfg.remap = { ...(cfg.remap || {}), ...raw.remap }
-      if (typeof raw.default_phase === "string") cfg.default_phase = raw.default_phase
-      if (Array.isArray(raw.phases)) {
-        const valid = raw.phases.filter((p: any) => p && typeof p === "object" && typeof p.key === "string" && p.key)
-        if (valid.length > 0) cfg.phases = valid
+      if (f && fs.existsSync(f)) {
+        const c = JSON.parse(fs.readFileSync(f, "utf8"))
+        if (c.goals) cfg.goals = { ...cfg.goals, ...c.goals }
+        if (c.weights) cfg.weights = { ...cfg.weights, ...c.weights }
+        if (c.names) cfg.names = { ...cfg.names, ...c.names }
+        if (Array.isArray(c.phases) && c.phases.length > 0) cfg.phases = c.phases
+        if (c.remap) cfg.remap = { ...cfg.remap, ...c.remap }
+        if (c.default_phase) cfg.default_phase = c.default_phase
       }
-      if (typeof raw.auto_seed === "boolean") cfg.auto_seed = raw.auto_seed
     } catch { /* bad config file → ignore */ }
   }
   return cfg
 }
 
-function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
+export function effectivePhases(cfg) {
   if (cfg.phases && cfg.phases.length > 0) {
     return cfg.phases.map((p, i) => ({
       key: p.key,
@@ -174,11 +62,9 @@ function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
 }
 
 /* ── واردسازی خودکار پیشرفت موجود ───────────────────────────────────────── */
-interface SeedItem { id: string; phase: string; score: number; status: string; detail: string }
+const normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff\u200c]+/g, "")
 
-const normKey = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff\u200c]+/g, "")
-
-const findPhase = (phases: PhaseDef[], v: string): string | null => {
+function findPhase(phases, v) {
   const n = normKey(v)
   if (!n) return null
   for (const p of phases) if (normKey(p.key) === n) return p.key
@@ -186,10 +72,10 @@ const findPhase = (phases: PhaseDef[], v: string): string | null => {
   return null
 }
 
-function scanSeedFiles(root: string): string[] {
-  const out: string[] = []
-  const cands: string[] = []
-  const push = (d: string, name: string) => { if (/progress|roadmap/i.test(name)) cands.push(path.join(d, name)) }
+export function scanSeedFiles(root) {
+  const out = []
+  const cands = []
+  const push = (d, name) => { if (/progress|roadmap/i.test(name)) cands.push(path.join(d, name)) }
   try {
     for (const name of fs.readdirSync(root)) push(root, name)
     for (const sub of ["reports", "docs", "planning", "plans", "progress"]) {
@@ -212,10 +98,10 @@ function scanSeedFiles(root: string): string[] {
   return out
 }
 
-function parseSeedFile(filePath: string, phases: PhaseDef[]): { items: SeedItem[]; skipped: number } {
-  const items: SeedItem[] = []
+export function parseSeedFile(filePath, phases) {
+  const items = []
   let skipped = 0
-  const pushItem = (id: string, phase: string, score: number, status: string, detail: string) => {
+  const pushItem = (id, phase, score, status, detail) => {
     const canon = findPhase(phases, phase)
     if (!canon) { skipped += 1; return }
     items.push({ id, phase: canon, score, status, detail: String(detail || "").slice(0, 140) })
@@ -227,176 +113,67 @@ function parseSeedFile(filePath: string, phases: PhaseDef[]): { items: SeedItem[
     let cur = ""
     for (const line of raw.split("\n")) {
       const h = line.match(/^#{1,3}\s+(.*)$/)
-      if (h) {
-        const p = findPhase(phases, h[1].replace(/[#*`]+/g, "").trim())
-        if (p) cur = p
-        continue
-      }
-      const cl = line.match(/^\s*[-*]\s*\[([ xX.oO])\]\s*(.*)$/)
-      if (!cl) continue
-      let text = cl[2]
-      const pm = text.match(/\(phase:\s*([^)]+)\)/i)
-      if (pm) { const p = findPhase(phases, pm[1]); if (p) cur = p; text = text.replace(pm[0], "").trim() }
-      if (!cur) continue
-      const done = /[xXoO]/.test(cl[1])
-      pushItem("md:" + cur + ":" + normKey(text), cur, done ? 1 : 0, done ? "done" : "todo", text)
+      if (h) { cur = h[1].trim(); continue }
+      const m = line.match(/^\s*[-*]\s*\[([ xX.oO])\]\s*(.*)$/)
+      if (!m) continue
+      const done = /[xXoO]/.test(m[1])
+      let phase = cur
+      let name = m[2].trim()
+      const ph = name.match(/\(phase:\s*([^)]+)\)/)
+      if (ph) { phase = ph[1].trim(); name = name.replace(/\(phase:\s*[^)]+\)/, "").trim() }
+      const sc = name.match(/(?:score|points|weight|value):\s*([\d.]+)/i)
+      pushItem(`${path.basename(filePath)}:${line.trim().slice(0, 80)}`, phase, sc ? Number(sc[1]) : 0, done ? "done" : "todo", name)
     }
     return { items, skipped }
   }
-  let data: any = null
-  try { data = JSON.parse(raw) } catch { return items }
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    if (Array.isArray(data.steps)) data = data.steps
-    else if (data.phases && typeof data.phases === "object") {
-      for (const [k, v] of Object.entries(data.phases)) pushItem("map:" + k, k, typeof v === "number" ? v : 1, "done", k)
-      return { items, skipped }
+  let data = null
+  try { data = JSON.parse(raw) } catch { return { items, skipped } }
+  const stepList = (Array.isArray(data) ? data : null) || (Array.isArray(data?.steps) ? data.steps : null)
+  if (stepList) {
+    for (const st of stepList) {
+      if (!st || typeof st !== "object") continue
+      const status = String(st.status || st.state || st.done || "").toLowerCase()
+      const done = /done|complete|committed|ok|شده|finished|passed|pass/.test(status) || st.done === true || st.complete === true
+      const phase = st.phase ?? st.fase ?? st.stage ?? st.category ?? st.area ?? st.key ?? ""
+      const score = Number(st.score ?? st.points ?? st.weight ?? st.value ?? (done ? 1 : 0))
+      const id = String(st.id ?? st.name ?? `${Math.random().toString(36).slice(2, 8)}`)
+      pushItem(id, phase, done ? score : 0, done ? "done" : "todo", String(st.name || st.title || id))
     }
+    return { items, skipped }
   }
-  if (Array.isArray(data)) {
-    data.forEach((it: any, i: number) => {
-      if (!it || typeof it !== "object") return
-      const phase = it.phase ?? it.fase ?? it.stage ?? it.category ?? it.area ?? it.key ?? ""
-      const status = String(it.status ?? it.state ?? "").toLowerCase()
-      const done = status === "" || /done|complete|committed|commited|ok|شده|کامل|✅|true/.test(status)
-      const score = done ? (Number(it.score ?? it.points ?? it.weight ?? it.value) || 1) : 0
-      const detail = String(it.name ?? it.title ?? it.task ?? phase)
-      pushItem(it.id != null ? String(it.id) : "i" + i + ":" + normKey(detail), phase, score, done ? "done" : "todo", detail)
-    })
+  for (const [phase, v] of Object.entries(data)) {
+    if (typeof v === "number") {
+      pushItem(`json:${phase}`, phase, v, "done", phase)
+    } else if (v && typeof v === "object" && Array.isArray(v.items)) {
+      for (const st of v.items) {
+        const status = String(st.status || st.state || "").toLowerCase()
+        const done = /done|complete|committed|ok|شده|finished/.test(status) || st.done === true
+        const score = Number(st.score ?? st.points ?? st.weight ?? st.value ?? (done ? 1 : 0))
+        pushItem(String(st.id ?? st.name ?? Math.random().toString(36).slice(2, 8)), phase, done ? score : 0, done ? "done" : "todo", String(st.name || st.title || ""))
+      }
+    }
   }
   return { items, skipped }
 }
 
-function addIssue(state: State, msg: string) {
-  state.issues.push({ t: Date.now(), msg: String(msg).slice(0, 200) })
-  if (state.issues.length > 20) state.issues.shift()
-}
-
-function seedState(state: State, phases: PhaseDef[], cfg: TrackerConfig, root: string): number {
-  if (cfg.auto_seed === false) return 0
-  let added = 0
-  try {
-    for (const filePath of scanSeedFiles(root)) {
-      let mtime = 0
-      try { mtime = fs.statSync(filePath).mtimeMs } catch { continue }
-      const entry = state.seeded[filePath] || { ids: [], mtime: 0 }
-      if (entry.mtime === mtime) continue
-      const res = parseSeedFile(filePath, phases)
-      if (!res.items.length) {
-        addIssue(state, `⚠️ ورود داده رد شد: «${path.basename(filePath)}» — فرمت ناشناخته یا فاز ناآشنا (${res.skipped} گام)`)
-        entry.mtime = mtime
-        state.seeded[filePath] = entry
-        continue
-      }
-      if (res.skipped > 0) addIssue(state, `⚠️ ${res.skipped} گام از «${path.basename(filePath)}» رد شد — فازشان با فازهای پروژه همخوانی ندارد`)
-      const known = new Set(entry.ids)
-      for (const it of res.items) {
-        if (known.has(it.id)) continue
-        known.add(it.id)
-        const ph = state.phases[it.phase] || (state.phases[it.phase] = { score: 0, events: 0, active: false })
-        ph.score += it.score
-        ph.events += 1
-        state.totals.seeded += 1
-        if (it.status !== "todo") {
-          state.log.unshift({ t: Date.now(), tool: "📥", phase: it.phase, weight: it.score, status: it.score > 0 ? "ok" : "warn", detail: it.detail })
-          if (state.log.length > 100) state.log.pop()
-        }
-        added += 1
-      }
-      entry.ids = [...known]
-      entry.mtime = mtime
-      state.seeded[filePath] = entry
-    }
-    if (added > 0 && state.history.length <= 1 && (state.history[0]?.[1] || 0) === 0) {
-      let score = 0, goal = 0
-      for (const p of phases) { score += state.phases[p.key]?.score || 0; goal += p.goal }
-      state.history = [[Date.now(), goal ? Math.round((score / goal) * 100) : 0]]
-    }
-  } catch { /* noop */ }
-  return added
-}
-
-/* ── ساختار وضعیت ───────────────────────────────────────────────────────── */
-interface PhaseState { score: number; events: number; active: boolean }
-interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string; kind?: string; verified?: boolean }
-interface State {
-  project: string
-  started_at: number
-  updated_at: number
-  phases: Record<string, PhaseState>
-  totals: {
-    tool_calls: number
-    edits: number
-    writes: number
-    bash: number
-    tests: number
-    deploys: number
-    docs: number
-    research: number
-    commits: number
-    messages: number
-    assistant_messages: number
-    sessions: number
-    errors: number
-    successes: number
-    suggestions: number
-    seeded: number
-    verified: number
-  }
-  seeded: Record<string, { ids: string[]; mtime: number }>
-  issues: { t: number; msg: string }[]
-  history: [number, number][]
-  growth_rate_per_hour: number
-  eta_minutes: number | null
-  overall_pct: number
-  milestones: number[]
-  log: LogEvent[]
-  chat_log: { t: number; text: string }[]
-}
-
-const emptyState = (project: string, keys: string[]): State => {
-  const phases: Record<string, PhaseState> = {}
-  for (const k of keys) phases[k] = { score: 0, events: 0, active: false }
-  const now = Date.now()
-  return {
-    project,
-    started_at: now,
-    updated_at: now,
-    phases,
-    totals: {
-      tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0,
-      deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, sessions: 0,
-      errors: 0, successes: 0, suggestions: 0, seeded: 0, verified: 0,
-      assistant_messages: 0,
-    },
-    seeded: {},
-    issues: [],
-    history: [[now, 0]],
-    growth_rate_per_hour: 0,
-    eta_minutes: null,
-    overall_pct: 0,
-    milestones: [],
-    log: [],
-    chat_log: [],
-  }
-}
-
 /* ── ابزارهای کمکی ──────────────────────────────────────────────────────── */
-const clampPct = (n: number) => Math.max(0, Math.min(100, Math.round(n * 10) / 10))
+export const clampPct = (n) => Math.max(0, Math.min(100, Math.round(n * 10) / 10))
 
-function classify(toolName: string, args: any): { phase: string; weight: number } {
-  const t = (toolName || "").toLowerCase()
-  const cmd = String(args?.command || args?.cmd || "")
-  const file = String(args?.filePath || args?.path || "")
+export function classify(toolName, args) {
+  const t = String(toolName || "").toLowerCase()
+  const cmd = String(args?.command || args?.cmd || args?.command_line || args?.description || "")
+  const file = String(args?.filePath || args?.path || args?.file_path || "")
   const isMd = /\.(md|markdown|txt|rst)$/i.test(file)
 
-  if (t === "edit") return { phase: isMd ? "docs" : "coding", weight: 1.0 }
+  if (t === "edit" || t === "notebookedit") return { phase: isMd ? "docs" : "coding", weight: 1.0 }
   if (t === "write") return { phase: isMd ? "docs" : "coding", weight: 1.2 }
   if (t === "read") return { phase: "research", weight: 0.3 }
-  if (t === "glob" || t === "grep" || t === "list") return { phase: "research", weight: 0.2 }
-  if (t === "webfetch" || t === "websearch") return { phase: "research", weight: 1.0 }
-  if (t === "question") return { phase: "research", weight: 0.5 }
+  if (t === "glob" || t === "grep" || t === "list" || t === "search") return { phase: "research", weight: 0.2 }
+  if (t === "webfetch" || t === "websearch" || t === "webfetchtool") return { phase: "research", weight: 1.0 }
+  if (t === "question" || t === "askuserquestion") return { phase: "research", weight: 0.5 }
   if (t === "todowrite") return { phase: "research", weight: 0.5 }
   if (t === "task") return { phase: "coding", weight: 1.5 }
+  if (t.startsWith("mcp__")) return { phase: "coding", weight: 1.0 }
 
   if (t === "bash") {
     const c = cmd.toLowerCase()
@@ -414,9 +191,8 @@ function classify(toolName: string, args: any): { phase: string; weight: number 
   return { phase: "coding", weight: 0.5 }
 }
 
-/* ── محاسبهٔ نرخ رشد و ETA ─────────────────────────────────────────────── */
-function growthRate(h: [number, number][]): number {
-  if (h.length < 2) return 0
+export function growthRate(h) {
+  if (!h || h.length < 2) return 0
   const now = h[h.length - 1][0]
   const cutoff = now - 60 * 60 * 1000
   const start = h.find((p) => p[0] >= cutoff) ?? h[0]
@@ -426,12 +202,12 @@ function growthRate(h: [number, number][]): number {
   return Math.round((delta / Math.max(hours, 0.001)) * 10) / 10
 }
 
-function computeEta(total: number, totalGoal: number, rate: number): number | null {
+export function computeEta(total, totalGoal, rate) {
   if (rate <= 0 || total >= totalGoal) return null
   return Math.round(((totalGoal - total) / rate) * 60)
 }
 
-function relTime(ts: number, now: number): string {
+export function relTime(ts, now) {
   const s = Math.max(1, Math.round((now - ts) / 1000))
   if (s < 60) return `${s}s`
   const m = Math.round(s / 60)
@@ -439,24 +215,23 @@ function relTime(ts: number, now: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
-const esc = (s: string) => String(s).replace(/[<>&]/g, (c) => (c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"))
+export const esc = (s) => String(s).replace(/[<>&]/g, (c) => (c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"))
 
-/* استخراج متن از content پیام (رشته یا آرایهٔ part های opencode) */
-const msgText = (content: any): string => {
+export const msgText = (content) => {
   if (!content) return ""
   if (typeof content === "string") return content
-  if (Array.isArray(content)) return content.map((p: any) => (typeof p === "string" ? p : p?.text || "")).join(" ")
+  if (Array.isArray(content)) return content.map((p) => (typeof p === "string" ? p : p?.text || "")).join(" ")
   return String(content)
 }
 
-function describeTool(toolName: string, args: any, outText: string): { detail: string; status: string } {
+export function describeTool(toolName, args, outText) {
   const txt = String(outText || "").trim()
-  if (toolName === "bash") {
+  if (toolName === "bash" || toolName === "bash_tool") {
     const cmd = String(args?.command || "")
     const lines = txt.split("\n").map((l) => l.trim()).filter(Boolean)
     const tail = lines.slice(-3).join(" | ")
     const detail = (tail || cmd).slice(0, 160)
-    let status: string
+    let status
     const tr = txt.match(/test result: (ok|FAILED)/i)
     if (tr) status = tr[1].toLowerCase() === "ok" ? "ok" : "error"
     else if (/failed|failure|panic|fatal|cannot|not found|exception|denied|refused|forbidden|invalid|✗|FAILED|\berror\b/i.test(txt + " " + cmd) && !/success|exited with code 0|passed|no errors?|errors?: 0|errors?: none/i.test(txt)) status = "error"
@@ -464,19 +239,19 @@ function describeTool(toolName: string, args: any, outText: string): { detail: s
     else status = txt ? "ok" : "warn"
     return { detail, status }
   }
-  if (toolName === "edit" || toolName === "write" || toolName === "read") {
-    const f = String(args?.filePath || args?.path || toolName).split(/[\\/]/).pop()
+  if (toolName === "edit" || toolName === "write" || toolName === "read" || toolName === "notebookedit") {
+    const f = String(args?.filePath || args?.path || args?.file_path || toolName).split(/[\\/]/).pop()
     return { detail: f || toolName, status: "ok" }
   }
   return { detail: "", status: "ok" }
 }
 
-/* نتیجهٔ تأییدشدهٔ واقعی (تست سبز، بیلد موفق، دیپلوی) → امتیاز ویژه */
-function detectOutcome(toolName: string, args: any, outText: string, status: string): { bonus: number; msg: string } | null {
+/* نتیجهٔ تأییدشدهٔ واقعی */
+export function detectOutcome(toolName, args, outText, status) {
   if (status !== "ok") return null
   const txt = String(outText || "")
-  const cmd = String(args?.command || "")
-  if (toolName === "bash") {
+  const cmd = String(args?.command || args?.command_line || "")
+  if (toolName === "bash" || toolName === "bash_tool") {
     const tr = txt.match(/test result: ok\.\s*(\d+)\s*passed/i)
     if (tr) return { bonus: 2, msg: `تست تأیید شد: ${tr[1]} پاس` }
     if (/test result: ok|tests? (all )?passed|passed/i.test(txt) && /test|cargo|pytest|npm test|go test|dotnet test/i.test(cmd)) return { bonus: 2, msg: "تست تأیید شد" }
@@ -488,12 +263,11 @@ function detectOutcome(toolName: string, args: any, outText: string, status: str
   return null
 }
 
-interface Insight { icon: string; fa: string; en: string; fixFa: string; fixEn: string }
-
-function buildInsights(state: State, phases: PhaseDef[], nowMs: number = Date.now()): Insight[] {
-  const ins: Insight[] = []
+/* ── توصیه‌ها و راهکارها ────────────────────────────────────────────────── */
+function buildInsights(state, phases, nowMs = Date.now()) {
+  const ins = []
   const t = state.totals
-  const errByPhase: Record<string, { count: number; last: string }> = {}
+  const errByPhase = {}
   for (const e of state.log) {
     if (e.status === "error") {
       const cur = errByPhase[e.phase] || { count: 0, last: "" }
@@ -507,7 +281,7 @@ function buildInsights(state: State, phases: PhaseDef[], nowMs: number = Date.no
     const d = info.last.toLowerCase()
     let fixFa = "اجرای مجدد با خروجی کامل و بررسی لاگ"
     let fixEn = "Re-run with full output and inspect the logs"
-    if (/test result: failed/i.test(d) || /fail/i.test(d)) { fixFa = "اجرای تستها با --nocapture و رفع اولین خطا؛ بررسی snapshot و متغیرهای محیط"; fixEn = "Run tests with --nocapture, fix the first failure; check snapshots and env vars" }
+    if (/test result: failed/i.test(d) || /fail/i.test(d)) { fixFa = "اجرای تست‌ها با --nocapture و رفع اولین خطا؛ بررسی snapshot و متغیرهای محیط"; fixEn = "Run tests with --nocapture, fix the first failure; check snapshots and env vars" }
     else if (/not found/i.test(d)) { fixFa = "بررسی مسیر فایل، نام ایمپورت/پکیج و نصب وابستگی"; fixEn = "Check the file path, import/package name and installed dependencies" }
     else if (/denied|forbidden|permission/i.test(d)) { fixFa = "بررسی مجوزها، توکن‌ها و سطوح دسترسی"; fixEn = "Check permissions, tokens and access levels" }
     else if (/panic|unwrap/i.test(d)) { fixFa = "بررسی مقادیر null/None و مدیریت خطا به‌جای unwrap"; fixEn = "Check for null/None values; replace unwrap with match or ok_or" }
@@ -519,26 +293,22 @@ function buildInsights(state: State, phases: PhaseDef[], nowMs: number = Date.no
   if (t.errors > 0 && rate >= 20) ins.push({ icon: "⚠️", fa: `نرخ خطا ${rate}٪ از کل عملیات`, en: `Error rate ${rate}% of all operations`, fixFa: "توقف و بررسی ریشه‌ای: بازتولید خطا، لاگ کامل، تست واحد روی همان مسیر", fixEn: "Stop and investigate: reproduce the error, get full logs, add a unit test on that path" })
   const idleH = Math.floor((nowMs - (state.updated_at || nowMs)) / 3_600_000)
   if (t.tool_calls > 0 && idleH >= 2) ins.push({ icon: "⏸️", fa: `پروژه از ${idleH} ساعت پیش بدون فعالیت است`, en: `No activity for ${idleH} hours`, fixFa: "ادامهٔ کار روی فاز فعال و ثبت نتیجه", fixEn: "Resume work on the active phase and record the outcome" })
-  if (t.verified > 0) ins.push({ icon: "⭐", fa: `${t.verified} گام تأییدشده (تست سبز / بیلد و استقرار موفق)`, en: `${t.verified} verified outcomes (green tests / successful build & deploy)`, fixFa: "هر نتیجهٔ واقعی را با تست/بیلد بعدی تأیید کنید", fixEn: "Keep verifying every real outcome with the next test/build" })
-  if (t.tests === 0 && t.tool_calls >= 3) ins.push({ icon: "🧪", fa: "هنوز هیچ تستی اجرا نشده", en: "No test runs recorded yet", fixFa: "افزودن و اجرای تست برای فاز فعلی و ثبت نتیجه", fixEn: "Add and run tests for the current phase, then record the result" })
-  if (t.commits === 0 && t.edits > 0) ins.push({ icon: "💾", fa: `ویرایش‌ها (${t.edits}) بدون کامیت`, en: `${t.edits} edits without any commit`, fixFa: "کامیت منظم با پیام توصیفی و push", fixEn: "Commit regularly with descriptive messages and push" })
-  if (t.docs === 0) ins.push({ icon: "📚", fa: "مستندسازی انجام نشده", en: "No documentation ops yet", fixFa: "افزودن README/توضیح API و ثبت عملیات docs", fixEn: "Add README/API docs and record docs operations" })
+  if (t.verified > 0) ins.push({ icon: "⭐", fa: `${t.verified} گام تأییدشده با نتیجهٔ واقعی`, en: `${t.verified} verified outcomes recorded`, fixFa: "ادامهٔ ثبت نتایج واقعی (تست سبز، بیلد، دیپلوی) برای امتیازهای تأییدشده", fixEn: "Keep recording real results (green tests, builds, deploys) for verified points" })
+  if (t.tests === 0 && t.tool_calls >= 3) ins.push({ icon: "🧪", fa: "هنوز هیچ تستی اجرا نشده", en: "No tests run yet", fixFa: "اجرای تست برای مسیرهای اصلی و افزودن تست واحد برای هر باگ", fixEn: "Run tests on core paths and add a unit test for every bug" })
+  if (t.commits === 0 && t.edits > 0) ins.push({ icon: "💾", fa: "ویرایش‌ها بدون کامیت", en: "Edits without commits", fixFa: "کامیت‌های کوچک و مکرر با پیام واضح", fixEn: "Small, frequent commits with clear messages" })
+  if (t.docs === 0) ins.push({ icon: "📚", fa: "مستندسازی انجام نشده", en: "No documentation yet", fixFa: "مستندسازی API، راه‌اندازی و تصمیم‌های کلیدی", fixEn: "Document API, setup and key decisions" })
   for (const p of phases) {
-    const ph = state.phases[p.key]
-    if (ph && ph.events === 0 && p.goal > 0) ins.push({ icon: "🚀", fa: `فاز «${p.fa}» هنوز شروع نشده`, en: `Phase "${p.en}" not started yet`, fixFa: "برنامه‌ریزی گام اول این فاز و شروع کار", fixEn: "Plan the first step of this phase and get started" })
+    const ps = state.phases[p.key] || { score: 0, events: 0 }
+    if (ps.events === 0 && state.totals.tool_calls > 0) ins.push({ icon: "🚀", fa: `فاز «${p.fa}» شروع نشده`, en: `Phase "${p.en}" not started`, fixFa: "برنامه‌ریزی گام‌های این فاز", fixEn: "Plan the steps of this phase" })
   }
-  if (t.errors === 0 && t.tool_calls >= 3) ins.push({ icon: "✅", fa: "بدون خطا تا اینجا — روند عالی", en: "No errors so far — great pace", fixFa: "ادامه با همین کیفیت؛ افزودن تست برای پوشش بیشتر", fixEn: "Keep the pace; add more tests for better coverage" })
-  if (state.overall_pct >= 100) ins.push({ icon: "🎉", fa: "پروژه کامل شد", en: "Project completed", fixFa: "بستن فازها، بررسی نهایی و مستندسازی", fixEn: "Close out phases, final review and documentation" })
-  for (const e of state.log) {
-    if (e.kind === "suggestion" || e.kind === "solution" || e.kind === "recommendation") {
-      ins.unshift({ icon: e.kind === "solution" ? "🔧" : "💡", fa: e.detail, en: e.detail, fixFa: "", fixEn: "" })
-    }
-  }
+  if (t.errors === 0 && t.tool_calls >= 3) ins.push({ icon: "✅", fa: "بدون خطا — ریتم سالم", en: "No errors — healthy pace", fixFa: "ادامه دهید", fixEn: "Keep going" })
+  if (state.overall_pct >= 100) ins.push({ icon: "🎉", fa: "پروژه کامل شد", en: "Project complete", fixFa: "مرور نهایی، مستندات تحویل و آرشیو", fixEn: "Final review, handover docs and archive" })
   return ins.slice(0, 6)
 }
 
 /* ── گزارش Markdown ────────────────────────────────────────────────────── */
-function renderMd(state: State, phases: PhaseDef[], totalGoal: number, total: number): string {  const rows = phases.map((p) => {
+export function renderMd(state, phases, totalGoal, total) {
+  const rows = phases.map((p) => {
     const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
     const pct = clampPct((ps.score / p.goal) * 100)
     const st = pct >= 100 ? "✅" : ps.active ? "🟡" : "⚪"
@@ -585,7 +355,7 @@ ${state.log.slice(0, 10).map((e) => {
 }
 
 /* ── تولید فایل HTML داشبورد (دوزبانه) ─────────────────────────────────── */
-function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects: any[]): string {
+export function renderHtml(state, phases, dir, otherProjects) {
   const totalGoal = phases.reduce((s, p) => s + p.goal, 0)
   const totalScore = phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
   const overall = state.overall_pct
@@ -609,7 +379,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     : ""
   const issuesHtml = state.issues.slice(-5).map((i) => `<div class="seed-line" style="color:#fbbf24">${esc(i.msg)}</div>`).join("")
 
-  const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
+  const faStatus = { done: "کامل", active: "فعال", idle: "در انتظار" }
 
   const recs = buildInsights(state, phases, nowMs)
   const recsHtml = recs.map((r) => `
@@ -656,7 +426,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const pts = hist.map(([t, v]) => {
     const x = ((t - minT) / (maxT - minT)) * W
     const y = H - (v / maxV) * (H - 20) - 10
-    return [x, y] as const
+    return [x, y]
   })
   const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")
   const area = pts.length > 1 ? `M0,${H} L${line.split(" ").join(" L")} L${W},${H} Z` : ""
@@ -699,8 +469,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     `<span data-en="${d.pct}%: ${d.en}" data-fa="${d.pct}٪: ${d.fa}">${d.pct}٪: ${d.fa}</span>`
   ).join("<br>")
 
-  const statusIcon: Record<string, string> = { ok: "✓", error: "✗", warn: "⚠", info: "•" }
-  const statusColor: Record<string, string> = { ok: "#34d399", error: "#fb7185", warn: "#fbbf24", info: "#8b93b8" }
+  const statusIcon = { ok: "✓", error: "✗", warn: "⚠", info: "•" }
+  const statusColor = { ok: "#34d399", error: "#fb7185", warn: "#fbbf24", info: "#8b93b8" }
 
   const logHtml = state.log.slice(0, 8).map((e) => {
     const p = phases.find((x) => x.key === e.phase)
@@ -718,12 +488,12 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>`
   }).join("") || `<div class="log-row muted" data-en="No activity recorded yet" data-fa="هنوز فعالیتی ثبت نشده">هنوز فعالیتی ثبت نشده</div>`
 
-  const othersHtml = otherProjects.filter((o) => o.id !== state.project).slice(0, 5).map((o) =>
+  const othersHtml = (otherProjects || []).filter((o) => o.id !== state.project).slice(0, 5).map((o) =>
     `<div class="other-row"><span>${o.id}</span><div class="bar mini"><div class="bar-fill" style="width:${o.pct}%;background:#22d3ee"></div></div><b>${o.pct}%</b></div>`
   ).join("") || `<div class="log-row muted" data-en="Only this project is tracked" data-fa="فقط این پروژه پیگیری می‌شود">فقط این پروژه پیگیری می‌شود</div>`
 
   const t = state.totals
-  const stats: [string, string, string, string][] = [
+  const stats = [
     ["Tool calls", "عملیات ابزار", String(t.tool_calls), "#22d3ee"],
     ["Edits", "ویرایش‌ها", String(t.edits), "#34d399"],
     ["Test runs", "اجرای تست", String(t.tests), "#fbbf24"],
@@ -968,7 +738,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.4.0 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.4.0 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.4.0 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="Project Tracker v${VERSION} — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="Project Tracker v${VERSION} — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">Project Tracker v${VERSION} — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
@@ -999,28 +769,71 @@ apply();
 </html>`
 }
 
-/* ── پلاگین ────────────────────────────────────────────────────────────── */
-const plugin: Plugin = async ({ project, directory, worktree }) => {
-  if (!isPrimary) return {}
+/* ── باز کردن داشبورد در مرورگر ────────────────────────────────────────── */
+export function openDashboard(htmlPath, root) {
+  if (process.env.PT_NO_OPEN) return false
+  try {
+    const cmd = process.platform === "win32"
+      ? `start "" "${htmlPath}"`
+      : process.platform === "darwin" ? `open "${htmlPath}"` : `xdg-open "${htmlPath}"`
+    exec(cmd, { cwd: root || path.dirname(htmlPath) }, () => { /* noop */ })
+    return true
+  } catch { return false }
+}
 
-  const root = typeof project === "string"
-    ? project
-    : (project as any)?.path || (project as any)?.directory || (project as any)?.worktree || directory || worktree || process.cwd()
+/* ── خلاصهٔ متنی دوزبانه (استفاده در CLI / MCP / چت) ────────────────────── */
+export function summaryText(state, phases) {
+  const t = state.totals
+  const lines = []
+  lines.push(`📊 ${state.project}`)
+  lines.push(`🎯 Progress: ${state.overall_pct}% · 🏆 Milestones: ${state.milestones.join(", ") || "—"}`)
+  lines.push(`⚡ Growth: ${state.growth_rate_per_hour} pts/h · ⏱️ ETA: ${state.eta_minutes != null ? Math.floor(state.eta_minutes / 60) + "h " + (state.eta_minutes % 60) + "m" : "—"}`)
+  const active = phases.find((p) => state.phases[p.key]?.active)
+  lines.push(`🧭 Active phase: ${active?.fa || "—"}`)
+  lines.push("| Phase | % | Score/Goal | Ops | Status |")
+  lines.push("|---|---|---|---|---|")
+  for (const p of phases) {
+    const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
+    const pct = clampPct((ps.score / p.goal) * 100)
+    const st = pct >= 100 ? "✓" : ps.active ? "●" : "○"
+    lines.push(`| ${p.en} / ${p.fa} | ${pct}% | ${ps.score}/${p.goal} | ${ps.events} | ${st} |`)
+  }
+  lines.push(`Tool calls: ${t.tool_calls} · Edits: ${t.edits} · Tests: ${t.tests} · Deploys: ${t.deploys} · Docs: ${t.docs} · Commits: ${t.commits} · Messages: ${t.messages} · Assistant: ${t.assistant_messages} · Sessions: ${t.sessions}`)
+  lines.push(`✅ ${t.successes} · ❌ ${t.errors} · ⭐ ${t.verified} · 📥 ${t.seeded}${state.issues.length ? ` · ⚠️ ${state.issues.length} warnings` : ""}`)
+  return lines.join("\n")
+}
 
-  const outDir = path.join(root, ".opencode", "project-tracker")
+/* ── موتور اصلی ─────────────────────────────────────────────────────────── */
+export function createTracker({ root, globalDir } = {}) {
+  const rootPath = root || process.cwd()
+  const outDir = path.join(rootPath, ".opencode", "project-tracker")
   const stateFile = path.join(outDir, "state.json")
   const htmlFile = path.join(outDir, "report.html")
   const mdFile = path.join(outDir, "report.md")
   const projectCfgFile = path.join(outDir, "config.json")
-  const globalDir = process.env.PT_GLOBAL_DIR || path.join(os.homedir(), ".config", "opencode", "project-tracker")
-  const globalCfgFile = path.join(globalDir, "config.json")
-  const projectsFile = path.join(globalDir, "projects.json")
+  const gDir = globalDir || process.env.PT_GLOBAL_DIR || path.join(os.homedir(), ".config", "opencode", "project-tracker")
+  const globalCfgFile = path.join(gDir, "config.json")
+  const projectsFile = path.join(gDir, "projects.json")
 
-  let cfg: TrackerConfig = loadConfig(globalCfgFile, projectCfgFile)
-  let phases: PhaseDef[] = effectivePhases(cfg)
-  let state: State = emptyState(path.basename(root), phases.map((p) => p.key))
-  let dirty = false
-  let lastFlush = 0
+  const emptyState = (project, keys) => {
+    const phases = {}
+    for (const k of keys) phases[k] = { score: 0, events: 0, active: false }
+    const now = Date.now()
+    return {
+      project, started_at: now, updated_at: now, phases,
+      totals: { tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0, deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, assistant_messages: 0, sessions: 0, errors: 0, successes: 0, suggestions: 0, seeded: 0, verified: 0 },
+      seeded: {}, issues: [], history: [[now, 0]], growth_rate_per_hour: 0, eta_minutes: null, overall_pct: 0, milestones: [], log: [], chat_log: [],
+    }
+  }
+
+  let cfg = loadConfig(globalCfgFile, projectCfgFile)
+  let phases = effectivePhases(cfg)
+  let state = emptyState(path.basename(rootPath), phases.map((p) => p.key))
+
+  const addIssue = (st, msg) => {
+    st.issues.push({ t: Date.now(), msg: String(msg).slice(0, 200) })
+    if (st.issues.length > 20) st.issues.shift()
+  }
 
   try {
     if (fs.existsSync(projectCfgFile)) JSON.parse(fs.readFileSync(projectCfgFile, "utf8"))
@@ -1028,17 +841,14 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     addIssue(state, "⚠️ config.json ناخوانا است — بخشی از تنظیمات اعمال نشده")
   }
 
-  const totalGoal = () => phases.reduce((s, p) => s + p.goal, 0)
-  const totalScore = () => phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
-
   const load = () => {
     try {
       if (fs.existsSync(stateFile)) {
         const raw = JSON.parse(fs.readFileSync(stateFile, "utf8"))
         const keys = phases.map((p) => p.key)
-        state = { ...emptyState(path.basename(root), keys), ...raw }
-        state.phases = { ...emptyState(path.basename(root), keys).phases, ...(raw.phases || {}) }
-        state.totals = { ...emptyState(path.basename(root), keys).totals, ...(raw.totals || {}) }
+        state = { ...emptyState(path.basename(rootPath), keys), ...raw }
+        state.phases = { ...emptyState(path.basename(rootPath), keys).phases, ...(raw.phases || {}) }
+        state.totals = { ...emptyState(path.basename(rootPath), keys).totals, ...(raw.totals || {}) }
         if (!Array.isArray(state.history)) state.history = [[Date.now(), 0]]
         if (!Array.isArray(state.milestones)) state.milestones = []
         if (!Array.isArray(state.log)) state.log = []
@@ -1057,13 +867,24 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     }
   }
 
+  const totalGoal = () => phases.reduce((s, p) => s + p.goal, 0)
+  const totalScore = () => phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
+
+  const readOtherProjects = () => {
+    try {
+      if (!fs.existsSync(projectsFile)) return []
+      const list = JSON.parse(fs.readFileSync(projectsFile, "utf8"))
+      return Array.isArray(list) ? list : []
+    } catch { return [] }
+  }
+
   const updateGlobalProjects = () => {
     try {
-      fs.mkdirSync(globalDir, { recursive: true })
-      let list: any[] = []
+      fs.mkdirSync(gDir, { recursive: true })
+      let list = []
       try { if (fs.existsSync(projectsFile)) list = JSON.parse(fs.readFileSync(projectsFile, "utf8")) || [] } catch { list = [] }
       if (!Array.isArray(list)) list = []
-      const entry = { id: state.project, pct: state.overall_pct, updated_at: Date.now(), dir: root }
+      const entry = { id: state.project, pct: state.overall_pct, updated_at: Date.now(), dir: rootPath }
       const idx = list.findIndex((o) => o.id === state.project)
       if (idx >= 0) list[idx] = entry; else list.push(entry)
       list = list.filter((o) => o && typeof o === "object" && o.id).sort((a, b) => b.updated_at - a.updated_at).slice(0, 20)
@@ -1071,12 +892,58 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     } catch { /* noop */ }
   }
 
-  const readOtherProjects = (): any[] => {
-    try {
-      if (!fs.existsSync(projectsFile)) return []
-      const list = JSON.parse(fs.readFileSync(projectsFile, "utf8"))
-      return Array.isArray(list) ? list : []
-    } catch { return [] }
+  const checkMilestones = () => {
+    for (const th of [25, 50, 75, 100]) {
+      if (state.overall_pct >= th && !state.milestones.includes(th)) state.milestones.push(th)
+    }
+  }
+
+  const pushHistory = (total) => {
+    const now = Date.now()
+    if (state.history.length === 0 || now - state.history[state.history.length - 1][0] >= 60_000) {
+      state.history.push([now, total])
+      if (state.history.length > 300) state.history.shift()
+    } else {
+      state.history[state.history.length - 1][1] = total
+    }
+  }
+
+  const seedState = () => {
+    const files = scanSeedFiles(rootPath)
+    let added = 0
+    for (const f of files) {
+      try {
+        const mtime = fs.statSync(f).mtimeMs
+        const prev = state.seeded[f]
+        if (prev && prev.mtime === mtime) continue
+        const { items, skipped } = parseSeedFile(f, phases)
+        if (skipped > 0) addIssue(state, `⚠️ «${path.basename(f)}» — ${skipped} گام رد شد (فاز نامشخص یا فرمت ناشناخته)`)
+        const ids = prev?.ids || []
+        let fileAdded = 0
+        for (const it of items) {
+          if (ids.includes(it.id)) continue
+          const canon = it.phase
+          const ph = state.phases[canon] || (state.phases[canon] = { score: 0, events: 0, active: false })
+          ph.events += 1
+          ph.score += it.score
+          if (it.status === "done") {
+            ids.push(it.id)
+            fileAdded += 1
+            added += 1
+            state.log.unshift({ t: Date.now(), tool: "📥", phase: canon, weight: it.score || 1, status: "ok", detail: `imported: ${it.detail}`, verified: false })
+            if (state.log.length > 100) state.log.pop()
+          }
+        }
+        state.seeded[f] = { ids, mtime }
+        state.totals.seeded += fileAdded
+      } catch { /* noop */ }
+    }
+    if (added > 0) {
+      const total = totalScore()
+      pushHistory(total)
+      state.overall_pct = clampPct((total / totalGoal()) * 100)
+      state.updated_at = Date.now()
+    }
   }
 
   const writeNow = () => {
@@ -1093,201 +960,139 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
       fs.writeFileSync(htmlFile, renderHtml(state, phases, outDir, readOtherProjects()))
       fs.writeFileSync(mdFile, renderMd(state, phases, totalGoal(), totalScore()))
       updateGlobalProjects()
-      lastFlush = Date.now()
-      dirty = false
-    } catch { /* never crash opencode */ }
+      return true
+    } catch { return false }
   }
 
-  const flush = () => {
-    if (dirty && Date.now() - lastFlush > 4000) writeNow()
-  }
+  const recordTool = (toolName, args, outText) => {
+    try {
+      if (toolName === "tracker_note") return { ok: true }
+      const cls = classify(toolName, args)
+      let phase = cls.phase
+      const mapped = cfg.remap?.[phase] || phase
+      const phaseKeys = new Set(phases.map((p) => p.key))
+      phase = phaseKeys.has(mapped) ? mapped : cfg.default_phase && phaseKeys.has(cfg.default_phase) ? cfg.default_phase : (phases[0]?.key || mapped)
+      let weight = cls.weight
+      if (typeof cfg.weights[toolName] === "number") weight = cfg.weights[toolName]
+      const desc = describeTool(toolName, args, outText)
+      const ph = state.phases[phase] || (state.phases[phase] = { score: 0, events: 0, active: false })
 
-  const pushHistory = (total: number) => {
-    const h = state.history
-    const now = Date.now()
-    if (h.length === 0 || now - h[h.length - 1][0] >= 60_000) {
-      h.push([now, total])
-      if (h.length > 300) h.shift()
-    } else {
-      h[h.length - 1][1] = total
+      ph.score += weight
+      ph.events += 1
+      for (const k of Object.keys(state.phases)) state.phases[k].active = k === phase
+
+      const outcome = detectOutcome(toolName, args, outText, desc.status)
+      let verified = false
+      if (outcome) {
+        ph.score += outcome.bonus
+        state.totals.verified += 1
+        verified = true
+      }
+
+      const totals = state.totals
+      totals.tool_calls += 1
+      if (toolName === "edit") totals.edits += 1
+      if (toolName === "write") totals.writes += 1
+      if (toolName === "bash" || toolName === "bash_tool") totals.bash += 1
+      if (phase === "testing") totals.tests += 1
+      if (phase === "deploy") totals.deploys += 1
+      if (phase === "docs") totals.docs += 1
+      if (phase === "research") totals.research += 1
+      if (/\b(git commit|gh pr)\b/.test(String(args?.command || args?.command_line || ""))) totals.commits += 1
+      if (desc.status === "error") totals.errors += 1
+      if (desc.status === "ok") totals.successes += 1
+
+      state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight: weight + (outcome?.bonus || 0), status: desc.status, detail: desc.detail, verified })
+      if (state.log.length > 100) state.log.pop()
+
+      const total = totalScore()
+      pushHistory(total)
+      state.overall_pct = clampPct((total / totalGoal()) * 100)
+      checkMilestones()
+      state.updated_at = Date.now()
+      writeNow()
+      return { ok: true, phase, weight, status: desc.status, verified }
+    } catch (e) {
+      return { ok: false, error: String(e) }
     }
   }
 
-  const checkMilestones = () => {
-    const thresholds = [25, 50, 75, 100]
-    const overall = state.overall_pct
-    for (const t of thresholds) {
-      if (overall >= t && !state.milestones.includes(t)) state.milestones.push(t)
+  const note = (type, text) => {
+    try {
+      const t = String(type || "info")
+      const status = t === "success" ? "ok" : t === "error" ? "error" : t === "warning" ? "warn" : "info"
+      const kind = ["suggestion", "solution", "recommendation"].includes(t) ? t : undefined
+      const detail = String(text || "").slice(0, 140)
+      const activeKey = phases.find((p) => state.phases[p.key]?.active)?.key || phases[0]?.key || "coding"
+      state.log.unshift({ t: Date.now(), tool: "📝", phase: activeKey, weight: 0.5, status, detail, kind })
+      if (state.log.length > 100) state.log.pop()
+      if (status === "error") state.totals.errors += 1
+      if (status === "ok") state.totals.successes += 1
+      if (status === "ok") state.totals.verified += 1
+      if (kind) state.totals.suggestions += 1
+      state.updated_at = Date.now()
+      writeNow()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
     }
   }
 
-  load()
-  seedState(state, phases, cfg, root)
-  writeNow()
-
-  const timer = setInterval(() => flush(), 5000)
-  timer.unref?.()
-
-  return {
-    "tool.execute.after": async (input: any, _output: any) => {
-      try {
-        const toolName = input?.tool
-        if (toolName === "tracker_note") return
-        const cls = classify(toolName, input?.args)
-        let phase = cls.phase
-        const mapped = cfg.remap?.[phase] || phase
-        const phaseKeys = new Set(phases.map((p) => p.key))
-        phase = phaseKeys.has(mapped) ? mapped : cfg.default_phase && phaseKeys.has(cfg.default_phase) ? cfg.default_phase : (phases[0]?.key || mapped)
-        let weight = cls.weight
-        if (typeof cfg.weights[toolName] === "number") weight = cfg.weights[toolName]
-        const desc = describeTool(toolName, input?.args, _output?.output)
-        const ph = state.phases[phase] || (state.phases[phase] = { score: 0, events: 0, active: false })
-
-        ph.score += weight
-        ph.events += 1
-        for (const k of Object.keys(state.phases)) state.phases[k].active = k === phase
-
-        const outcome = detectOutcome(toolName, input?.args, _output?.output, desc.status)
-        let verified = false
-        if (outcome) {
-          ph.score += outcome.bonus
-          state.totals.verified += 1
-          verified = true
-        }
-
-        const totals = state.totals
-        totals.tool_calls += 1
-        if (toolName === "edit") totals.edits += 1
-        if (toolName === "write") totals.writes += 1
-        if (toolName === "bash") totals.bash += 1
-        if (phase === "testing") totals.tests += 1
-        if (phase === "deploy") totals.deploys += 1
-        if (phase === "docs") totals.docs += 1
-        if (phase === "research") totals.research += 1
-        if (/\b(git commit|gh pr)\b/.test(String(input?.args?.command || ""))) totals.commits += 1
-        if (desc.status === "error") totals.errors += 1
-        if (desc.status === "ok") totals.successes += 1
-
-        state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight: weight + (outcome?.bonus || 0), status: desc.status, detail: desc.detail, verified })
-        if (state.log.length > 100) state.log.pop()
-
-        const total = totalScore()
-        pushHistory(total)
-        state.overall_pct = clampPct((total / totalGoal()) * 100)
-        checkMilestones()
+  const chatMessage = (role, content) => {
+    try {
+      if (role === "user") {
+        state.totals.messages += 1
         state.updated_at = Date.now()
-        dirty = true
-        flush()
-      } catch { /* noop */ }
-    },
-
-    "chat.message": async (_input: any, output: any) => {
-      try {
-        const role = output?.message?.role
-        if (role === "user") {
-          state.totals.messages += 1
+        writeNow()
+      } else if (role === "assistant") {
+        const text = msgText(content).replace(/[\r\n\t]+/g, " ").trim().slice(0, 160)
+        if (text) {
+          state.totals.assistant_messages += 1
+          state.chat_log.unshift({ t: Date.now(), text })
+          if (state.chat_log.length > 20) state.chat_log.pop()
           state.updated_at = Date.now()
-          dirty = true
-          flush()
-        } else if (role === "assistant") {
-          const text = msgText(output?.message?.content).replace(/[\r\n\t]+/g, " ").trim().slice(0, 160)
-          if (text) {
-            state.totals.assistant_messages += 1
-            state.chat_log.unshift({ t: Date.now(), text })
-            if (state.chat_log.length > 20) state.chat_log.pop()
-            state.updated_at = Date.now()
-            dirty = true
-            flush()
-          }
-        }
-      } catch { /* noop */ }
-    },
-
-    event: async ({ event }: any) => {
-      try {
-        if (event?.type === "session.created") state.totals.sessions += 1
-        if (event?.type === "session.idle") writeNow()
-      } catch { /* noop */ }
-    },
-
-    "command.execute.before": async (input: any) => {
-      try {
-        if (String(input?.command || "") === "tracker") {
-          seedState(state, phases, cfg, root)
           writeNow()
         }
-      } catch { /* noop */ }
-    },
+      }
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  }
 
-    tool: {
-      tracker_note: tool({
-        description: "Record a short progress note into the project tracker: a bug found, an error, a successful operation, a decision, a suggestion or a solution for a problem. Call this whenever something noteworthy happens during the task.",
-        args: {
-          text: tool.schema.string().describe("Short note, max ~140 characters"),
-          type: tool.schema.string().describe("One of: success, error, warning, info, suggestion, solution, recommendation").optional(),
-        },
-        async execute(args: any) {
-          try {
-            const type = String(args?.type || "info")
-            const status = type === "success" ? "ok" : type === "error" ? "error" : type === "warning" ? "warn" : "info"
-            const kind = ["suggestion", "solution", "recommendation"].includes(type) ? type : undefined
-            const detail = String(args?.text || "").slice(0, 140)
-            const activeKey = phases.find((p) => state.phases[p.key]?.active)?.key || phases[0]?.key || "coding"
-            state.log.unshift({ t: Date.now(), tool: "📝", phase: activeKey, weight: 0.5, status, detail, kind })
-            if (state.log.length > 100) state.log.pop()
-            if (status === "error") state.totals.errors += 1
-            if (status === "ok") state.totals.successes += 1
-            if (status === "ok") state.totals.verified += 1
-            if (kind) state.totals.suggestions += 1
-            state.updated_at = Date.now()
-            dirty = true
-            flush()
-            return "✅ Note recorded in the project tracker."
-          } catch {
-            return "Note recording failed."
-          }
-        },
-      }),
+  const resolveProject = (q) => {
+    if (!q) return rootPath
+    const lq = String(q).toLowerCase()
+    const hit = readOtherProjects().find((o) => String(o.id).toLowerCase() === lq || String(o.id).toLowerCase().includes(lq) || String(o.dir || "").toLowerCase().includes(lq))
+    return hit ? hit.dir : null
+  }
 
-      tracker_open: tool({
-        description: "Open the project tracker dashboard (report.html) of any tracked project. Without args: the current project. With a project name or path fragment: that project's dashboard (resolved from the global project registry).",
-        args: {
-          project: tool.schema.string().describe("Optional: project name or path fragment of another tracked project").optional(),
-        },
-        async execute(args: any) {
-          try {
-            const all = readOtherProjects()
-            let dir = root
-            const q = String(args?.project || "").trim()
-            if (q) {
-              const lq = q.toLowerCase()
-              const hit = all.find((o) => String(o.id).toLowerCase() === lq || String(o.id).toLowerCase().includes(lq) || String(o.dir || "").toLowerCase().includes(lq))
-              if (!hit) return `پروژهٔ «${q}» یافت نشد. پروژه‌های ثبت‌شده: ${all.map((o) => o.id).join("، ") || "(هیچ)"}`
-              dir = hit.dir
-            }
-            const html = path.join(dir, ".opencode", "project-tracker", "report.html")
-            if (!fs.existsSync(html)) return `داشبوردی برای این پروژه پیدا نشد: ${html}`
-            if (!process.env.PT_NO_OPEN) {
-              const cmd = process.platform === "win32"
-                ? `start "" "${html}"`
-                : process.platform === "darwin" ? `open "${html}"` : `xdg-open "${html}"`
-              exec(cmd, { cwd: dir }, () => { /* noop */ })
-            }
-            return `✅ داشبورد باز شد: ${html}`
-          } catch {
-            return "خطا در باز کردن داشبورد."
-          }
-        },
-      }),
-    },
+  const open = (q) => {
+    const dir = resolveProject(q)
+    if (!dir) return { ok: false, message: `پروژهٔ «${q}» یافت نشد. پروژه‌های ثبت‌شده: ${readOtherProjects().map((o) => o.id).join("، ") || "(هیچ)"}` }
+    const html = path.join(dir, ".opencode", "project-tracker", "report.html")
+    if (!fs.existsSync(html)) return { ok: false, message: `داشبوردی برای این پروژه پیدا نشد: ${html}` }
+    openDashboard(html, dir)
+    return { ok: true, message: `داشبورد باز شد: ${html}` }
+  }
 
-    dispose: async () => {
-      try {
-        clearInterval(timer)
-        writeNow()
-      } catch { /* noop */ }
-    },
+  const list = () => readOtherProjects().map((o) => ({ id: o.id, pct: o.pct, dir: o.dir }))
+
+  const init = () => {
+    load()
+    seedState()
+    return writeNow()
+  }
+
+  return {
+    get state() { return state },
+    get phases() { return phases },
+    get dir() { return rootPath },
+    get stateFile() { return stateFile },
+    init, writeNow, recordTool, note, chatMessage, open, list,
+    summary: () => summaryText(state, phases),
+    resolveProject,
   }
 }
 
-export default plugin
+export default { VERSION, createTracker, classify, parseSeedFile, scanSeedFiles, summaryText }
