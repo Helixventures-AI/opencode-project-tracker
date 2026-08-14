@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ─────────────────────────────────────────────────────────────────────────────
  *  opencode Project Tracker Plugin — ردیاب زندهٔ مراحل و پیشرفت پروژه
  * ─────────────────────────────────────────────────────────────────────────────
@@ -358,9 +358,23 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const ringR = 62, ringC = 2 * Math.PI * ringR
   const ringDash = (overall / 100) * ringC
 
-  const milestonesHtml = state.milestones.map((m) =>
-    `<span class="ms-chip" style="--acc:${m >= 100 ? "#34d399" : m >= 75 ? "#a78bfa" : m >= 50 ? "#38bdf8" : "#fbbf24"}">🏆 ${m}%</span>`
-  ).join("") || `<span class="ms-chip idle" data-en="🏁 No milestones yet" data-fa="🏁 هنوز نقطه‌ای نرسیده">🏁 هنوز نقطه‌ای نرسیده</span>`
+  const milestoneDefs = [
+    { pct: 25, en: "Project started — planning & setup done, execution begins", fa: "شروع پروژه — برنامه‌ریزی و راه‌اندازی کامل شد، اجرا آغاز می‌شود" },
+    { pct: 50, en: "Halfway — core implementation is in place", fa: "نیمهٔ راه — هستهٔ اصلی پیاده‌سازی شد" },
+    { pct: 75, en: "Mostly done — stabilization, testing and polish phase", fa: "بخش اعظم — فاز تثبیت، تست و پالایش" },
+    { pct: 100, en: "Complete — all phase goals reached", fa: "تکمیل — همهٔ اهداف فازها محقق شد" },
+  ]
+
+  const milestonesHtml = milestoneDefs.map((d) => {
+    const reached = state.milestones.includes(d.pct)
+    const color = d.pct >= 100 ? "#34d399" : d.pct >= 75 ? "#a78bfa" : d.pct >= 50 ? "#38bdf8" : "#fbbf24"
+    const style = reached ? `style="--acc:${color}"` : ""
+    return `<span class="ms-chip ${reached ? "" : "dim"}" ${style} title="${d.en} | ${d.fa}">🏆 ${d.pct}%</span>`
+  }).join("")
+
+  const milestonesLegend = milestoneDefs.map((d) =>
+    `<span data-en="${d.pct}%: ${d.en}" data-fa="${d.pct}٪: ${d.fa}">${d.pct}٪: ${d.fa}</span>`
+  ).join("<br>")
 
   const logHtml = state.log.slice(0, 8).map((e) => {
     const p = phases.find((x) => x.key === e.phase)
@@ -456,8 +470,10 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .chart-line{fill:none;stroke:#22d3ee;stroke-width:2.5;stroke-linejoin:round}
   .proj-line{fill:none;stroke:#c084fc;stroke-width:2;stroke-dasharray:6 6}
   .ms-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-  .ms-chip{font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid var(--acc);color:var(--acc,#22d3ee);background:rgba(255,255,255,.04)}
-  .ms-chip.idle{color:var(--muted);border-color:var(--stroke)}
+  .ms-chip{font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid var(--acc);color:var(--acc,#22d3ee);background:rgba(255,255,255,.04);cursor:help}
+  .ms-chip.dim{opacity:.35;color:var(--muted);border-color:var(--stroke)}
+  .ms-legend{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.9;direction:rtl;text-align:right}
+  .ms-legend span{display:block}
   .phase-card{background:var(--glass);border:1px solid var(--stroke);border-radius:14px;padding:14px;margin-bottom:12px}
   .phase-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .step{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;background:var(--acc);color:#0b0f1f}
@@ -532,6 +548,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
           </div>
         </div>
         <div class="ms-row">${milestonesHtml}</div>
+        <div class="ms-legend">${milestonesLegend}</div>
         <div class="tools">
           <button class="btn" onclick="document.getElementById('desc').hidden=!document.getElementById('desc').hidden" data-en="Phase descriptions" data-fa="تشریح مراحل">تشریح مراحل</button>
           <button class="btn ghost" onclick="window.print()" data-en="Print / PDF" data-fa="چاپ / PDF">چاپ / PDF</button>
@@ -570,7 +587,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.2 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.2.1 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.2.1 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.2.1 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
