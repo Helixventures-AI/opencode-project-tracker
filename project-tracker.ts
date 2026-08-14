@@ -293,8 +293,10 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const eta = state.eta_minutes != null ? `${Math.floor(state.eta_minutes / 60)}h ${state.eta_minutes % 60}m` : "—"
   const nowMs = Date.now()
 
-  const subEn = `Live update · ${new Date(state.updated_at).toLocaleString("en-US")} · ${duration} elapsed`
-  const subFa = `به‌روزرسانی زنده · ${new Date(state.updated_at).toLocaleString("fa-IR")} · ${duration} زمان سپری‌شده`
+  const subEn = `Live update · ${duration} elapsed`
+  const subFa = `به‌روزرسانی زنده · ${duration} زمان سپری‌شده`
+  const dateEn = new Date(state.updated_at).toLocaleString("en-US")
+  const dateFa = new Date(state.updated_at).toLocaleString("fa-IR")
 
   const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
 
@@ -441,6 +443,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
   h1{font-size:22px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
+  .proj-name{font-size:15px;font-weight:600;color:#7df3c8;margin-top:6px}
+  .rep-date{color:var(--muted);font-size:12.5px;margin-top:3px}
   .pills{display:flex;gap:10px;flex-wrap:wrap}
   .pill{background:var(--glass);border:1px solid var(--stroke);border-radius:999px;padding:8px 16px;font-size:13px;display:flex;gap:8px;align-items:center}
   .pill b{color:#7df3c8}
@@ -511,7 +515,9 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
 <div class="wrap">
   <header>
     <div>
-      <h1 data-en="📊 Project Tracker — ${state.project}" data-fa="📊 ردیاب پروژه — ${state.project}">📊 ردیاب پروژه — ${state.project}</h1>
+      <h1 data-en="📊 Project Tracker" data-fa="📊 ردیاب پروژه">📊 ردیاب پروژه</h1>
+      <div class="proj-name">🗂️ ${state.project}</div>
+      <div class="rep-date" data-en="📅 Report date: ${dateEn}" data-fa="📅 تاریخ گزارش: ${dateFa}">📅 تاریخ گزارش: ${dateFa}</div>
       <div class="sub" data-en="${subEn}" data-fa="${subFa}">${subFa}</div>
     </div>
     <div class="pills">
