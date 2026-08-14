@@ -52,7 +52,7 @@ await sleep(300);
 const checks = {};
 
 const init = await send("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
-checks["initialize ok + server info"] = init.result?.serverInfo?.name === "opencode-project-tracker" && !!init.result?.protocolVersion;
+checks["initialize ok + server info"] = init.result?.serverInfo?.name === "ai-project-tracker" && !!init.result?.protocolVersion;
 
 const tools = await send("tools/list", {});
 const names = tools.result.tools.map((t) => t.name);

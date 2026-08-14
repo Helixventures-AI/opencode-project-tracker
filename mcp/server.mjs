@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * opencode-project-tracker — MCP server (Model Context Protocol, stdio)
+ * ai-project-tracker — MCP server (Model Context Protocol, stdio)
  * Zero npm dependencies. Works with any MCP-capable client:
  * Cursor, Windsurf, Cline, Claude Desktop, VS Code Copilot, Cherry Studio, ...
  *
@@ -13,7 +13,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createTracker, summaryText, VERSION } from "../core/tracker-core.mjs";
 
-const serverInfo = { name: "opencode-project-tracker", version: VERSION };
+const serverInfo = { name: "ai-project-tracker", version: VERSION };
 let protocolVersion = "2025-06-18";
 
 const TOOLS = [

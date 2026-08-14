@@ -1,4 +1,4 @@
-# opencode-project-tracker
+# ai-project-tracker
 
 Real-time project progress tracker **for AI coding tools** — opencode, Claude Code, any MCP-capable IDE (Cursor, Windsurf, Cline, Claude Desktop, VS Code Copilot, ...) and web AI platforms (Replit, Lovable, Bolt, v0) via a file protocol.
 

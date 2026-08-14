@@ -46,10 +46,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Helixventures-AI/opencode-project-tracker.git"
+    "url": "git+https://github.com/Helixventures-AI/ai-project-tracker.git"
   },
-  "homepage": "https://github.com/Helixventures-AI/opencode-project-tracker",
+  "homepage": "https://github.com/Helixventures-AI/ai-project-tracker",
   "bugs": {
-    "url": "https://github.com/Helixventures-AI/opencode-project-tracker/issues"
+    "url": "https://github.com/Helixventures-AI/ai-project-tracker/issues"
   }
 }

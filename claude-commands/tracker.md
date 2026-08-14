@@ -25,7 +25,7 @@ description: Show the live project progress report (bilingual summary + dashboar
 
 ۳. سپس داشبورد گرافیکی را باز کن (به این ترتیب):
 - اگر ابزار MCP `tracker_open` در دسترس بود آن را صدا بزن — بدون آرگومان برای پروژهٔ فعلی، یا با `project: <آرگومان>`
-- وگرنه اگر ابزار `Bash` در دسترس بود: `node <مسیر ریپوی opencode-project-tracker>/cli/pt.mjs open` را در پوشهٔ پروژهٔ هدف اجرا کن (اگر مسیر ریپو مشخص نیست، از `state.json` استنباط کن یا از کاربر بپرس)
+- وگرنه اگر ابزار `Bash` در دسترس بود: `node <مسیر ریپوی ai-project-tracker>/cli/pt.mjs open` را در پوشهٔ پروژهٔ هدف اجرا کن (اگر مسیر ریپو مشخص نیست، از `state.json` استنباط کن یا از کاربر بپرس)
 - وگرنه فایل `report.html` را در `<پروژه>/.opencode/project-tracker/report.html` با `Read` بخوان و مسیرش را به کاربر بده تا خودش باز کند.
 
 ۴. در آخر به کاربر بگو که این داشبورد با هر عملیات بعدی (تست، کد، بیلد، دیپلوی) به‌طور خودکار به‌روزرسانی می‌شود.

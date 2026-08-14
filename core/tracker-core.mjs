@@ -1,5 +1,5 @@
 /**
- * opencode-project-tracker — core engine (platform-agnostic)
+ * ai-project-tracker — core engine (platform-agnostic)
  * Shared by: opencode plugin, MCP server, Claude Code hooks, CLI, web file-protocol.
  * Zero npm dependencies — Node.js >= 18, ESM.
  */

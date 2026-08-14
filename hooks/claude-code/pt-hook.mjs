@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Claude Code hook for opencode-project-tracker.
+ * Claude Code hook for ai-project-tracker.
  * Receives hook JSON on stdin (Claude Code invokes this command per event).
  * Events handled:
  *   PostToolUse       → record the tool call (auto-classified into a phase)
