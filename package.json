@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "opencode-project-tracker",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Real-time project progress tracker for opencode: 7 phases, percentages, growth charts, ETA prediction, milestones, bilingual EN/FA dashboard toggle, multi-project comparison. Fully local and privacy-friendly.",
   "type": "module",
   "main": "project-tracker.ts",

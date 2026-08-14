@@ -561,10 +561,13 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
       <div class="card chart">
         <div style="font-size:13px;margin-bottom:6px" data-en="Score growth over time (— actual · — projected)" data-fa="رشد امتیاز در طول زمان (— روند واقعی · — پیش‌بینی)">رشد امتیاز در طول زمان (— روند واقعی · — پیش‌بینی)</div>
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+          ${pts.length < 2 ? `
+          <line class="chart-grid" x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" stroke-dasharray="10 10"/>
+          <text x="${W / 2}" y="${H / 2 - 12}" text-anchor="middle" fill="#8b93b8" font-size="14" data-en="⏳ Waiting for activity data — the chart will draw here as you work..." data-fa="⏳ در انتظار ثبت عملیات — با شروع کار، نمودار اینجا رسم می‌شود...">⏳ در انتظار ثبت عملیات — با شروع کار، نمودار اینجا رسم می‌شود...</text>` : `
           ${[0.25, 0.5, 0.75].map((f) => `<line class="chart-grid" x1="0" y1="${H * f}" x2="${W}" y2="${H * f}"/>`).join("")}
           <path class="chart-area" d="${area}"/>
           <polyline class="chart-line" points="${line}"/>
-          ${projection}
+          ${projection}`}
         </svg>
       </div>
 
