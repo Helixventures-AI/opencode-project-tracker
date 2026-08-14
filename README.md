@@ -9,9 +9,13 @@ Tracks every operation (edit, test, deploy, docs, commit, ...) during a coding s
 ## Features
 
 - 🧭 **7 standard phases** — Research & Planning, Architecture & Setup, Implementation, Testing & QA, Documentation, Deployment & DevOps, Review & Delivery (each with Persian + English descriptions)
-- 📊 **Live dashboard** — `report.html`: overall progress ring, per-phase progress bars with percentages, score-over-time growth chart, stat cards (tool calls, tests, deploys, commits, sessions...)
-- ⚡ **Growth rate** — points gained per hour
-- 🗂️ **Persistence** — state survives restarts, accumulates across sessions in `<project>/.opencode/project-tracker/`
+- 📊 **Live dashboard** — `report.html`: overall progress ring, per-phase progress bars with percentages, score-over-time growth chart **with a dashed projection line**, recent-activity feed, milestone badges (25/50/75/100%), stat cards (tool calls, tests, deploys, commits, sessions...)
+- ⚡ **Growth rate & ETA** — points per hour plus a **predicted time-to-completion** estimate
+- 🏆 **Milestones** — auto-recorded progress thresholds with badge chips
+- 🗂️ **Multi-project comparison** — a global registry (`~/.config/opencode/project-tracker/projects.json`) tracks all projects you work on; the dashboard shows how they compare
+- 📄 **Markdown report** — `report.md` generated alongside the HTML dashboard (ready for docs/commits)
+- ⚙️ **Configurable** — `config.json` to customize phase goals, tool weights and phase names (per-project or global)
+- 🗃️ **Persistence** — state survives restarts, accumulates across sessions in `<project>/.opencode/project-tracker/`
 - 🔒 **100% local** — no network, no telemetry, no external CDNs (inline CSS/SVG)
 - 🌍 **Cross-platform** — Windows / macOS / Linux
 
@@ -52,17 +56,40 @@ While working with opencode, the plugin records every tool operation in real tim
 - Phase progress = `score / goal` (goals are pre-defined per phase).
 - Overall progress = total score / total goals, capped at 100%.
 - Growth rate = score delta over the last 60 minutes, per hour.
+- ETA = remaining points / growth rate (appears once enough history exists).
 - Output files:
 
 ```
 <project>/.opencode/project-tracker/
 ├── state.json    # machine-readable progress state
-└── report.html   # self-contained visual dashboard (no internet needed)
+├── report.html   # self-contained visual dashboard (no internet needed)
+├── report.md     # markdown summary
+└── config.json   # optional: your customization (see below)
 ```
+
+Global registry (all projects you track): `~/.config/opencode/project-tracker/projects.json`
+
+## Configuration
+
+Create `config.json` in `.opencode/project-tracker/` (per-project) or `~/.config/opencode/project-tracker/config.json` (global — project config overrides global):
+
+```json
+{
+  "goals": { "coding": 80, "testing": 40 },
+  "weights": { "edit": 2, "bash": 1 },
+  "names": {
+    "coding": { "en": "Coding", "fa": "کدنویسی" }
+  }
+}
+```
+
+- `goals` — target score per phase (keys: `research`, `setup`, `coding`, `testing`, `docs`, `deploy`, `delivery`)
+- `weights` — override the weight of a specific tool (e.g. `edit`, `bash`, `read`, `write`, `task`)
+- `names` — rename a phase in the dashboard (EN/FA)
 
 ## Customization
 
-Edit `PHASES` in `project-tracker.ts` to change phase names, goals or colors.
+Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
 
 ## Development
 

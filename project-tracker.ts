@@ -9,17 +9,24 @@
  *  کارکرد:
  *    - هر عملیات ابزار (edit/write/bash/test/deploy/doc/...) به یکی از ۷ فاز
  *      پروژه نگاشت می‌شود و امتیاز می‌گیرد
- *    - وضعیت (state.json) + داشبورد گرافیکی (report.html) به‌صورت زنده در
- *      <project>/.opencode/project-tracker/  بازنویسی می‌شود
- *    - کامند `/tracker` خلاصهٔ عددی و درصدی را در چت نشان می‌دهد و داشبورد را
- *      در مرورگر باز می‌کند
+ *    - وضعیت (state.json) + داشبورد گرافیکی (report.html) + گزارش متنی
+ *      (report.md) به‌صورت زنده در <project>/.opencode/project-tracker/ تولید می‌شود
+ *    - کامند `/tracker` (یا `/t`) خلاصهٔ عددی و درصدی را در چت نشان می‌دهد و
+ *      داشبورد را در مرورگر باز می‌کند
  *
- *  امنیت: هیچ داده‌ای خارج از پروژه ارسال نمی‌شود؛ همه‌چیز محلی است.
+ *  امکانات نسخهٔ ۱.۱:
+ *    - پیکربندی با config.json (اهداف، وزن‌ها، نام فازها) — پروژه‌ای یا سراسری
+ *    - پیش‌بینی زمان اتمام (ETA) بر اساس نرخ رشد
+ *    - نقطه‌های عطف (۲۵/۵۰/۷۵/۱۰۰٪) و نمودار روند با خط پیش‌بینی
+ *    - لاگ آخرین فعالیت‌ها + گزارش Markdown + مقایسهٔ چند پروژه
+ *
+ *  امنیت: هیچ داده‌ای خارج از سیستم ارسال نمی‌شود؛ همه‌چیز محلی است.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import type { Plugin } from "@opencode-ai/plugin"
 import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 
 /* جلوگیری از بارگذاری دوباره (اگر پلاگین هم در پوشهٔ سراسری و هم محلی باشد) */
@@ -38,7 +45,7 @@ interface PhaseDef {
   color: string
 }
 
-const PHASES: PhaseDef[] = [
+const PHASE_DEFAULTS: PhaseDef[] = [
   {
     key: "research",
     en: "Research & Planning",
@@ -97,8 +104,41 @@ const PHASES: PhaseDef[] = [
   },
 ]
 
+/* ── پیکربندی ──────────────────────────────────────────────────────────── */
+interface TrackerConfig {
+  goals: Record<string, number>
+  weights: Record<string, number>
+  names: Record<string, { en: string; fa: string }>
+}
+
+const DEFAULT_CONFIG: TrackerConfig = { goals: {}, weights: {}, names: {} }
+
+function loadConfig(...files: string[]): TrackerConfig {
+  const cfg: TrackerConfig = { goals: {}, weights: {}, names: {} }
+  for (const f of files) {
+    try {
+      if (!fs.existsSync(f)) continue
+      const raw = JSON.parse(fs.readFileSync(f, "utf8")) || {}
+      if (raw.goals && typeof raw.goals === "object") for (const [k, v] of Object.entries(raw.goals)) if (typeof v === "number") cfg.goals[k] = v
+      if (raw.weights && typeof raw.weights === "object") for (const [k, v] of Object.entries(raw.weights)) if (typeof v === "number") cfg.weights[k] = v
+      if (raw.names && typeof raw.names === "object") for (const [k, v] of Object.entries(raw.names)) if (v && typeof v === "object" && typeof (v as any).en === "string") cfg.names[k] = { en: (v as any).en, fa: (v as any).fa }
+    } catch { /* bad config file → ignore */ }
+  }
+  return cfg
+}
+
+function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
+  return PHASE_DEFAULTS.map((p) => ({
+    ...p,
+    goal: cfg.goals[p.key] ?? p.goal,
+    en: cfg.names[p.key]?.en ?? p.en,
+    fa: cfg.names[p.key]?.fa ?? p.fa,
+  }))
+}
+
 /* ── ساختار وضعیت ───────────────────────────────────────────────────────── */
 interface PhaseState { score: number; events: number; active: boolean }
+interface LogEvent { t: number; tool: string; phase: string; weight: number }
 interface State {
   project: string
   started_at: number
@@ -119,11 +159,15 @@ interface State {
   }
   history: [number, number][]
   growth_rate_per_hour: number
+  eta_minutes: number | null
+  overall_pct: number
+  milestones: number[]
+  log: LogEvent[]
 }
 
 const emptyState = (project: string): State => {
   const phases: Record<string, PhaseState> = {}
-  for (const p of PHASES) phases[p.key] = { score: 0, events: 0, active: false }
+  for (const p of PHASE_DEFAULTS) phases[p.key] = { score: 0, events: 0, active: false }
   const now = Date.now()
   return {
     project,
@@ -136,6 +180,10 @@ const emptyState = (project: string): State => {
     },
     history: [[now, 0]],
     growth_rate_per_hour: 0,
+    eta_minutes: null,
+    overall_pct: 0,
+    milestones: [],
+    log: [],
   }
 }
 
@@ -173,7 +221,7 @@ function classify(toolName: string, args: any): { phase: string; weight: number 
   return { phase: "coding", weight: 0.5 }
 }
 
-/* ── محاسبهٔ نرخ رشد ───────────────────────────────────────────────────── */
+/* ── محاسبهٔ نرخ رشد و ETA ─────────────────────────────────────────────── */
 function growthRate(h: [number, number][]): number {
   if (h.length < 2) return 0
   const now = h[h.length - 1][0]
@@ -185,17 +233,63 @@ function growthRate(h: [number, number][]): number {
   return Math.round((delta / Math.max(hours, 0.001)) * 10) / 10
 }
 
+function computeEta(total: number, totalGoal: number, rate: number): number | null {
+  if (rate <= 0 || total >= totalGoal) return null
+  return Math.round(((totalGoal - total) / rate) * 60)
+}
+
+function relTime(ts: number, now: number): string {
+  const s = Math.max(1, Math.round((now - ts) / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+/* ── گزارش Markdown ────────────────────────────────────────────────────── */
+function renderMd(state: State, phases: PhaseDef[], totalGoal: number, total: number): string {
+  const rows = phases.map((p) => {
+    const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
+    const pct = clampPct((ps.score / p.goal) * 100)
+    const st = pct >= 100 ? "✅" : ps.active ? "🟡" : "⚪"
+    return `| ${p.en} / ${p.fa} | ${pct}% | ${ps.score}/${p.goal} | ${ps.events} | ${st} |`
+  }).join("\n")
+  const t = state.totals
+  return `# 📊 Project Tracker — ${state.project}
+
+- **پیشرفت کلی:** ${state.overall_pct}% (${total}/${totalGoal} امتیاز)
+- **نرخ رشد:** ${state.growth_rate_per_hour} امتیاز/ساعت
+- **پیش‌بینی اتمام:** ${state.eta_minutes != null ? Math.floor(state.eta_minutes / 60) + "h " + (state.eta_minutes % 60) + "m" : "—"}
+- **به‌روزرسانی:** ${new Date(state.updated_at).toISOString()}
+
+## فازها
+
+| Phase | % | Score/Goal | Ops | Status |
+|---|---|---|---|---|
+${rows}
+
+## آمار
+
+- ابزار: ${t.tool_calls} · ویرایش: ${t.edits} · تست: ${t.tests} · استقرار: ${t.deploys} · مستندات: ${t.docs} · کامیت: ${t.commits} · چت: ${t.messages} · نشست: ${t.sessions}
+
+## آخرین فعالیت‌ها
+
+${state.log.slice(0, 10).map((e) => `- \`${e.tool}\` → ${phases.find((p) => p.key === e.phase)?.en || e.phase} (+${e.weight}) — ${new Date(e.t).toLocaleString()}`).join("\n") || "- (هیچ)"}
+`
+}
+
 /* ── تولید فایل HTML داشبورد ───────────────────────────────────────────── */
-function renderHtml(state: State, dir: string): string {
-  const totalGoal = PHASES.reduce((s, p) => s + p.goal, 0)
-  const totalScore = PHASES.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
-  const overall = clampPct((totalScore / totalGoal) * 100)
+function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects: any[]): string {
+  const totalGoal = phases.reduce((s, p) => s + p.goal, 0)
+  const totalScore = phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
+  const overall = state.overall_pct
   const minutes = Math.round((Date.now() - state.started_at) / 60000)
   const hh = Math.floor(minutes / 60)
   const mm = minutes % 60
   const duration = hh > 0 ? `${hh}h ${mm}m` : `${mm}m`
+  const eta = state.eta_minutes != null ? `${Math.floor(state.eta_minutes / 60)}h ${state.eta_minutes % 60}m` : "—"
 
-  const phasesHtml = PHASES.map((p, i) => {
+  const phasesHtml = phases.map((p, i) => {
     const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
     const pct = clampPct((ps.score / p.goal) * 100)
     const done = pct >= 100
@@ -222,7 +316,7 @@ function renderHtml(state: State, dir: string): string {
   }).join("")
 
   const hist = state.history
-  const maxV = Math.max(...hist.map((p) => p[1]), 1)
+  const maxV = Math.max(...hist.map((p) => p[1]), totalGoal, 1)
   const minT = hist[0][0]
   const maxT = Math.max(hist[hist.length - 1][0], minT + 1)
   const W = 900, H = 240
@@ -233,8 +327,46 @@ function renderHtml(state: State, dir: string): string {
   })
   const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")
   const area = pts.length > 1 ? `M0,${H} L${line.split(" ").join(" L")} L${W},${H} Z` : ""
+
+  let projection = ""
+  if (pts.length >= 2) {
+    const seg = pts.slice(-60)
+    const n = seg.length
+    let mx = 0, my = 0
+    for (const [x, y] of seg) { mx += x; my += y }
+    mx /= n; my /= n
+    let num = 0, den = 0
+    for (const [x, y] of seg) { num += (x - mx) * (y - my); den += (x - mx) ** 2 }
+    const slope = den > 0 ? num / den : 0
+    if (slope > 0) {
+      const [lx, ly] = seg[seg.length - 1]
+      const yEnd = Math.min(H, ly + slope * (W - lx))
+      projection = `<path class="proj-line" d="M${lx.toFixed(1)},${ly.toFixed(1)} L${W},${yEnd.toFixed(1)}"/>`
+    }
+  }
+
   const ringR = 62, ringC = 2 * Math.PI * ringR
   const ringDash = (overall / 100) * ringC
+
+  const milestonesHtml = state.milestones.map((m) =>
+    `<span class="ms-chip" style="--acc:${m >= 100 ? "#34d399" : m >= 75 ? "#a78bfa" : m >= 50 ? "#38bdf8" : "#fbbf24"}">🏆 ${m}%</span>`
+  ).join("") || `<span class="ms-chip idle">🏁 هنوز نقطه‌ای نرسیده</span>`
+
+  const logHtml = state.log.slice(0, 8).map((e) => {
+    const p = phases.find((x) => x.key === e.phase)
+    return `
+    <div class="log-row">
+      <span class="dot" style="background:${p?.color || "#888"}"></span>
+      <span class="log-tool">${e.tool}</span>
+      <span class="log-phase">${p?.en || e.phase}</span>
+      <span class="log-w">+${e.weight}</span>
+      <span class="log-t">${relTime(e.t, state.updated_at)} ago</span>
+    </div>`
+  }).join("") || `<div class="log-row muted">هنوز فعالیتی ثبت نشده</div>`
+
+  const othersHtml = otherProjects.filter((o) => o.id !== state.project).slice(0, 5).map((o) =>
+    `<div class="other-row"><span>${o.id}</span><div class="bar mini"><div class="bar-fill" style="width:${o.pct}%;background:#22d3ee"></div></div><b>${o.pct}%</b></div>`
+  ).join("") || `<div class="log-row muted">فقط این پروژه پیگیری می‌شود</div>`
 
   const stat = (label: string, fa: string, val: string, color: string) => `
     <div class="stat" style="--acc:${color}">
@@ -269,8 +401,10 @@ function renderHtml(state: State, dir: string): string {
   header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
   h1{font-size:22px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
-  .pill{background:var(--glass);border:1px solid var(--stroke);border-radius:999px;padding:8px 16px;font-size:13px;display:flex;gap:10px;align-items:center}
+  .pills{display:flex;gap:10px;flex-wrap:wrap}
+  .pill{background:var(--glass);border:1px solid var(--stroke);border-radius:999px;padding:8px 16px;font-size:13px;display:flex;gap:8px;align-items:center}
   .pill b{color:#7df3c8}
+  .pill .eta{color:#c4b5fd}
   .grid{display:grid;grid-template-columns:340px 1fr;gap:18px}
   @media(max-width:900px){.grid{grid-template-columns:1fr}}
   .card{background:var(--glass);border:1px solid var(--stroke);border-radius:18px;padding:20px;backdrop-filter:blur(10px)}
@@ -294,6 +428,10 @@ function renderHtml(state: State, dir: string): string {
   .chart-grid{stroke:rgba(255,255,255,.05);stroke-width:1}
   .chart-area{fill:url(#areaGrad);stroke:none}
   .chart-line{fill:none;stroke:#22d3ee;stroke-width:2.5;stroke-linejoin:round}
+  .proj-line{fill:none;stroke:#c084fc;stroke-width:2;stroke-dasharray:6 6}
+  .ms-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .ms-chip{font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid var(--acc);color:var(--acc,#22d3ee);background:rgba(255,255,255,.04)}
+  .ms-chip.idle{color:var(--muted);border-color:var(--stroke)}
   .phase-card{background:var(--glass);border:1px solid var(--stroke);border-radius:14px;padding:14px;margin-bottom:12px}
   .phase-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .step{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;background:var(--acc);color:#0b0f1f}
@@ -307,8 +445,20 @@ function renderHtml(state: State, dir: string): string {
   .phase-desc{font-size:12px;color:var(--muted);margin:8px 0 10px;direction:rtl;text-align:right;line-height:1.7}
   .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
   .bar-fill{height:100%;border-radius:99px;transition:width .8s ease}
+  .bar.mini{height:5px;flex:1;min-width:60px}
   .phase-meta{display:flex;justify-content:space-between;margin-top:7px;font-size:11.5px;color:var(--muted)}
   .phase-meta .pct{font-weight:700;color:var(--txt);font-size:13px}
+  .log-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px}
+  .log-row:last-child{border-bottom:none}
+  .log-row.muted{color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:99px;flex:none}
+  .log-tool{font-weight:600;min-width:90px}
+  .log-phase{color:var(--muted);flex:1}
+  .log-w{color:#7df3c8;font-weight:600}
+  .log-t{color:var(--muted);font-size:11px;white-space:nowrap}
+  .other-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px}
+  .other-row b{color:#22d3ee;min-width:38px;text-align:left}
+  .other-row span{min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   footer{margin-top:20px;text-align:center;color:var(--muted);font-size:11.5px;direction:rtl}
   .btn{background:var(--grad);border:none;color:#0b0f1f;font-weight:700;padding:8px 18px;border-radius:999px;cursor:pointer;font-size:12.5px}
   .btn.ghost{background:transparent;border:1px solid var(--stroke);color:var(--txt);font-weight:500}
@@ -322,7 +472,10 @@ function renderHtml(state: State, dir: string): string {
       <h1>📊 Project Tracker — ${state.project}</h1>
       <div class="sub">به‌روزرسانی زنده · ${new Date(state.updated_at).toLocaleString("fa-IR")} · ${duration} elapsed</div>
     </div>
-    <div class="pill">رشد: <b>${state.growth_rate_per_hour} pts/h</b></div>
+    <div class="pills">
+      <div class="pill">رشد: <b>${state.growth_rate_per_hour} pts/h</b></div>
+      <div class="pill">پیش‌بینی اتمام: <b class="eta">${eta}</b></div>
+    </div>
   </header>
 
   <div class="grid">
@@ -351,22 +504,29 @@ function renderHtml(state: State, dir: string): string {
             ${state.totals.deploys} عملیات استقرار · ${state.totals.commits} کامیت
           </div>
         </div>
+        <div class="ms-row">${milestonesHtml}</div>
         <div class="tools">
           <button class="btn" onclick="document.getElementById('desc').hidden=!document.getElementById('desc').hidden">تشریح مراحل</button>
           <button class="btn ghost" onclick="window.print()">چاپ / PDF</button>
         </div>
         <div id="desc" hidden style="margin-top:12px;font-size:12px;color:var(--muted);direction:rtl;line-height:2">
-          ${PHASES.map((p) => `<b style="color:${p.color}">${p.fa}</b>: ${p.desc_fa}`).join("<br>")}
+          ${phases.map((p) => `<b style="color:${p.color}">${p.fa}</b>: ${p.desc_fa}`).join("<br>")}
         </div>
       </div>
 
       <div class="card chart">
-        <div style="font-size:13px;margin-bottom:6px">رشد امتیاز در طول زمان <span style="color:var(--muted)">(score over time)</span></div>
+        <div style="font-size:13px;margin-bottom:6px">رشد امتیاز در طول زمان <span style="color:var(--muted)">(—: روند واقعی · —: پیش‌بینی)</span></div>
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
           ${[0.25, 0.5, 0.75].map((f) => `<line class="chart-grid" x1="0" y1="${H * f}" x2="${W}" y2="${H * f}"/>`).join("")}
           <path class="chart-area" d="${area}"/>
           <polyline class="chart-line" points="${line}"/>
+          ${projection}
         </svg>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div style="font-size:13px;margin-bottom:8px">🕘 آخرین فعالیت‌ها <span style="color:var(--muted)">(recent activity)</span></div>
+        ${logHtml}
       </div>
     </div>
 
@@ -385,10 +545,14 @@ function renderHtml(state: State, dir: string): string {
         ${stat("Messages", "پیام‌های چت", String(state.totals.messages), "#818cf8")}
         ${stat("Sessions", "نشست‌ها", String(state.totals.sessions), "#38bdf8")}
       </div>
+      <div class="card" style="margin-top:18px">
+        <div style="font-size:13px;margin-bottom:8px">🗂️ سایر پروژه‌های پیگیری‌شده <span style="color:var(--muted)">(other projects)</span></div>
+        ${othersHtml}
+      </div>
     </div>
   </div>
 
-  <footer>opencode Project Tracker — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود و در هر عملیات به‌روزرسانی می‌شود</footer>
+  <footer>opencode Project Tracker v1.1 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 </body>
 </html>`
@@ -397,16 +561,28 @@ function renderHtml(state: State, dir: string): string {
 /* ── پلاگین ────────────────────────────────────────────────────────────── */
 const plugin: Plugin = async ({ project, directory, worktree }) => {
   if (!isPrimary) return {}
+
   const root = typeof project === "string"
     ? project
     : (project as any)?.path || (project as any)?.directory || (project as any)?.worktree || directory || worktree || process.cwd()
+
   const outDir = path.join(root, ".opencode", "project-tracker")
   const stateFile = path.join(outDir, "state.json")
   const htmlFile = path.join(outDir, "report.html")
+  const mdFile = path.join(outDir, "report.md")
+  const projectCfgFile = path.join(outDir, "config.json")
+  const globalDir = process.env.PT_GLOBAL_DIR || path.join(os.homedir(), ".config", "opencode", "project-tracker")
+  const globalCfgFile = path.join(globalDir, "config.json")
+  const projectsFile = path.join(globalDir, "projects.json")
 
+  let cfg: TrackerConfig = loadConfig(globalCfgFile, projectCfgFile)
+  let phases: PhaseDef[] = effectivePhases(cfg)
   let state: State = emptyState(path.basename(root))
   let dirty = false
   let lastFlush = 0
+
+  const totalGoal = () => phases.reduce((s, p) => s + p.goal, 0)
+  const totalScore = () => phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
 
   const load = () => {
     try {
@@ -415,17 +591,48 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         state = { ...emptyState(path.basename(root)), ...raw }
         state.phases = { ...emptyState(path.basename(root)).phases, ...(raw.phases || {}) }
         state.totals = { ...emptyState(path.basename(root)).totals, ...(raw.totals || {}) }
+        if (!Array.isArray(state.history)) state.history = [[Date.now(), 0]]
+        if (!Array.isArray(state.milestones)) state.milestones = []
+        if (!Array.isArray(state.log)) state.log = []
       }
     } catch { /* state file corrupt → start fresh */ }
   }
 
+  const updateGlobalProjects = () => {
+    try {
+      fs.mkdirSync(globalDir, { recursive: true })
+      let list: any[] = []
+      try { if (fs.existsSync(projectsFile)) list = JSON.parse(fs.readFileSync(projectsFile, "utf8")) || [] } catch { list = [] }
+      if (!Array.isArray(list)) list = []
+      const entry = { id: state.project, pct: state.overall_pct, updated_at: Date.now(), dir: root }
+      const idx = list.findIndex((o) => o.id === state.project)
+      if (idx >= 0) list[idx] = entry; else list.push(entry)
+      list = list.filter((o) => o && typeof o === "object" && o.id).sort((a, b) => b.updated_at - a.updated_at).slice(0, 20)
+      fs.writeFileSync(projectsFile, JSON.stringify(list, null, 2))
+    } catch { /* noop */ }
+  }
+
+  const readOtherProjects = (): any[] => {
+    try {
+      if (!fs.existsSync(projectsFile)) return []
+      const list = JSON.parse(fs.readFileSync(projectsFile, "utf8"))
+      return Array.isArray(list) ? list : []
+    } catch { return [] }
+  }
+
   const writeNow = () => {
     try {
-      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
+      cfg = loadConfig(globalCfgFile, projectCfgFile)
+      phases = effectivePhases(cfg)
       state.updated_at = Date.now()
       state.growth_rate_per_hour = growthRate(state.history)
+      state.overall_pct = clampPct((totalScore() / totalGoal()) * 100)
+      state.eta_minutes = computeEta(totalScore(), totalGoal(), state.growth_rate_per_hour)
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
       fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
-      fs.writeFileSync(htmlFile, renderHtml(state, outDir))
+      fs.writeFileSync(htmlFile, renderHtml(state, phases, outDir, readOtherProjects()))
+      fs.writeFileSync(mdFile, renderMd(state, phases, totalGoal(), totalScore()))
+      updateGlobalProjects()
       lastFlush = Date.now()
       dirty = false
     } catch { /* never crash opencode */ }
@@ -446,6 +653,14 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     }
   }
 
+  const checkMilestones = () => {
+    const thresholds = [25, 50, 75, 100]
+    const overall = state.overall_pct
+    for (const t of thresholds) {
+      if (overall >= t && !state.milestones.includes(t)) state.milestones.push(t)
+    }
+  }
+
   load()
   writeNow()
 
@@ -455,7 +670,10 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
   return {
     "tool.execute.after": async (input: any, _output: any) => {
       try {
-        const { phase, weight } = classify(input?.tool, input?.args)
+        const toolName = input?.tool
+        const cls = classify(toolName, input?.args)
+        let { phase, weight } = cls
+        if (typeof cfg.weights[toolName] === "number") weight = cfg.weights[toolName]
         const ph = state.phases[phase] || (state.phases[phase] = { score: 0, events: 0, active: false })
 
         ph.score += weight
@@ -464,17 +682,22 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
 
         const totals = state.totals
         totals.tool_calls += 1
-        if (input?.tool === "edit") totals.edits += 1
-        if (input?.tool === "write") totals.writes += 1
-        if (input?.tool === "bash") totals.bash += 1
+        if (toolName === "edit") totals.edits += 1
+        if (toolName === "write") totals.writes += 1
+        if (toolName === "bash") totals.bash += 1
         if (phase === "testing") totals.tests += 1
         if (phase === "deploy") totals.deploys += 1
         if (phase === "docs") totals.docs += 1
         if (phase === "research") totals.research += 1
         if (/\b(git commit|gh pr)\b/.test(String(input?.args?.command || ""))) totals.commits += 1
 
-        const total = PHASES.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
+        state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight })
+        if (state.log.length > 100) state.log.pop()
+
+        const total = totalScore()
         pushHistory(total)
+        state.overall_pct = clampPct((total / totalGoal()) * 100)
+        checkMilestones()
         dirty = true
         flush()
       } catch { /* noop */ }
