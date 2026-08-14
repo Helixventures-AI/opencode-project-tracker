@@ -90,6 +90,19 @@ While working with opencode, the plugin records every tool operation in real tim
 2. Or press `ctrl+p` and pick **tracker** from the command list.
 3. The dashboard auto-updates after every operation (throttled ~4s).
 
+### Importing existing git history (backfill past phases)
+
+If a project already has commits (before the tracker was installed), import them so the phase percentages and stats reflect past work — **idempotent** (re-runs only add new commits):
+
+```sh
+pt import-git                      # all commits in the current repo
+pt import-git "2 weeks ago"        # only recent commits
+```
+
+or via MCP: `tracker_import_git` (args: `project`, `since`).
+
+Each commit maps to a phase by its message: `feat/fix/refactor` → Implementation, `test` → Testing & QA, `docs` → Documentation, `ci/deploy/docker/release` → Deployment, `merge/version` → Review & Delivery. Commits count as verified successes with their real timestamps (so the growth chart stays honest).
+
 ## How it works
 
 - Each tool call is classified into a phase with a weight (tests/deploys weigh more than reads).

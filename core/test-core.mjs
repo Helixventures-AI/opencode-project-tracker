@@ -108,6 +108,38 @@ tr = createTracker({ root, globalDir: G });
 tr.init();
 checks["config goal applied"] = tr.phases.find((p) => p.key === "coding").goal === 90;
 
+/* 10) git history import */
+root = mk("proj-f");
+tr = createTracker({ root, globalDir: G });
+tr.init();
+const day = 24 * 60 * 60 * 1000;
+const gitCommits = [
+  { hash: "a1", ts: Date.now() - 30 * day, subject: "feat: scaffold project" },
+  { hash: "a2", ts: Date.now() - 25 * day, subject: "test: unit tests for core" },
+  { hash: "a3", ts: Date.now() - 20 * day, subject: "docs: readme" },
+  { hash: "a4", ts: Date.now() - 10 * day, subject: "ci: docker build" },
+  { hash: "a5", ts: Date.now() - 2 * day, subject: "fix: memory leak" },
+  { hash: "a6", ts: Date.now() - 1 * day, subject: "Merge branch 'main'" },
+];
+let r = tr.importGitCommits(gitCommits);
+s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
+checks["git import: 6 imported, 0 skipped"] = r.imported === 6 && r.skipped === 0;
+checks["git import: testing 2+2=4"] = Math.abs(s.phases.testing.score - 4) < 0.001;
+checks["git import: deploy 2.5+2=4.5"] = Math.abs(s.phases.deploy.score - 4.5) < 0.001;
+checks["git import: docs 1.2"] = Math.abs(s.phases.docs.score - 1.2) < 0.001;
+checks["git import: merge -> delivery 1+1=2"] = Math.abs(s.phases.delivery.score - 2) < 0.001;
+checks["git import: coding 1 (feat) + 1.2 (fix) = 2.2"] = Math.abs(s.phases.coding.score - 2.2) < 0.001;
+checks["git import: commits=6 successes=6 verified=6"] = s.totals.commits === 6 && s.totals.successes === 6 && s.totals.verified === 6;
+checks["git import: overall>0"] = s.overall_pct > 0;
+checks["git import: log has 📜 entries"] = s.log.filter((e) => e.tool === "📜").length === 6;
+checks["git import: history sorted + recent tail"] = s.history.every((p, i, a) => i === 0 || a[i - 1][0] <= p[0]) && Date.now() - s.history[s.history.length - 1][0] < 60_000;
+r = tr.importGitCommits(gitCommits);
+s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
+checks["git import: idempotent (0 new)"] = r.imported === 0 && r.skipped === 6 && s.totals.commits === 6;
+r = tr.importGitCommits([{ hash: "a7", ts: Date.now(), subject: "docs: changelog" }]);
+s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
+checks["git import: new commit only added"] = r.imported === 1 && s.totals.commits === 7 && Math.abs(s.phases.docs.score - 2.4) < 0.001;
+
 let ok = true;
 for (const [k, v] of Object.entries(checks)) {
   console.log((v ? "PASS" : "FAIL") + "  " + k);

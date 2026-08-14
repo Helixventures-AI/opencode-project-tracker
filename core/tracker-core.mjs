@@ -8,7 +8,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { exec } from "node:child_process"
 
-export const VERSION = "1.4.0"
+export const VERSION = "1.4.1"
 
 export const PHASE_DEFAULTS = [
   { key: "research", en: "Research & Planning", fa: "پژوهش و برنامه‌ریزی", desc_en: "Requirements gathering, feasibility, architecture decisions, scope and roadmap.", desc_fa: "جمع‌آوری نیازمندی‌ها، امکان‌سنجی، تصمیم‌های معماری، دامنه و نقشهٔ راه.", goal: 15, color: "#38bdf8" },
@@ -189,6 +189,19 @@ export function classify(toolName, args) {
     return { phase: "coding", weight: 1.0 }
   }
   return { phase: "coding", weight: 0.5 }
+}
+
+export function gitPhase(subject) {
+  const s = String(subject || "").trim().toLowerCase()
+  if (/^test|tests?[:：]|^qa|spec|coverage|e2e|unit test/.test(s)) return { phase: "testing", weight: 2, bonus: 2 }
+  if (/^docs?[:：]|documentation|readme|doc:/.test(s)) return { phase: "docs", weight: 1.2, bonus: 0 }
+  if (/^(ci|deploy|docker|release|publish|build|infra|chore\(release\)|chore\(ci\)|helm|k8s)[:：]/.test(s)) return { phase: "deploy", weight: 2.5, bonus: 2 }
+  if (/^feat|feature|implement|add|new|support|enable/.test(s)) return { phase: "coding", weight: 1, bonus: 0 }
+  if (/^fix|bugfix|hotfix|patch|resolve|correct/.test(s)) return { phase: "coding", weight: 1.2, bonus: 0 }
+  if (/^refactor|perf|optimize|clean/.test(s)) return { phase: "coding", weight: 1, bonus: 0 }
+  if (/^chore|deps|dependabot|bump|update depend/.test(s)) return { phase: "setup", weight: 0.8, bonus: 0 }
+  if (/^merge|^initial|^wip|^revert|^bump version|^v[0-9]/.test(s)) return { phase: "delivery", weight: 1, bonus: 1 }
+  return { phase: "coding", weight: 1, bonus: 0 }
 }
 
 export function growthRate(h) {
@@ -818,7 +831,7 @@ export function createTracker({ root, globalDir } = {}) {
     return {
       project, started_at: now, updated_at: now, phases,
       totals: { tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0, deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, assistant_messages: 0, sessions: 0, errors: 0, successes: 0, suggestions: 0, seeded: 0, verified: 0 },
-      seeded: {}, issues: [], history: [[now, 0]], growth_rate_per_hour: 0, eta_minutes: null, overall_pct: 0, milestones: [], log: [], chat_log: [],
+      seeded: {}, issues: [], history: [[now, 0]], growth_rate_per_hour: 0, eta_minutes: null, overall_pct: 0, milestones: [], log: [], chat_log: [], imported_commits: [],
     }
   }
 
@@ -853,6 +866,7 @@ export function createTracker({ root, globalDir } = {}) {
         if (typeof state.totals.verified !== "number") state.totals.verified = 0
         if (typeof state.totals.assistant_messages !== "number") state.totals.assistant_messages = 0
         if (!Array.isArray(state.chat_log)) state.chat_log = []
+        if (!Array.isArray(state.imported_commits)) state.imported_commits = []
       }
     } catch {
       try {
@@ -1074,6 +1088,62 @@ export function createTracker({ root, globalDir } = {}) {
 
   const list = () => readOtherProjects().map((o) => ({ id: o.id, pct: o.pct, dir: o.dir }))
 
+  const importGitCommits = (commits) => {
+    try {
+      if (!Array.isArray(commits) || commits.length === 0) return { ok: true, imported: 0, skipped: 0 }
+      const known = new Set(state.imported_commits || [])
+      const fresh = commits
+        .filter((c) => c && c.hash && !known.has(c.hash))
+        .map((c) => ({ hash: String(c.hash), ts: Number(c.ts) || Date.now(), subject: String(c.subject || "").slice(0, 140) }))
+        .sort((a, b) => a.ts - b.ts)
+      if (fresh.length === 0) return { ok: true, imported: 0, skipped: commits.length, total: Math.round(totalScore() * 10) / 10 }
+
+      const points = state.history.filter((p) => Array.isArray(p) && typeof p[1] === "number")
+      let total = totalScore()
+      for (const c of fresh) {
+        const cls = gitPhase(c.subject)
+        let phase = cls.phase
+        const mapped = cfg.remap?.[phase] || phase
+        const phaseKeys = new Set(phases.map((p) => p.key))
+        phase = phaseKeys.has(mapped) ? mapped : cfg.default_phase && phaseKeys.has(cfg.default_phase) ? cfg.default_phase : (phases[0]?.key || mapped)
+        let weight = cls.weight
+        if (typeof cfg.weights["git_commit"] === "number") weight = cfg.weights["git_commit"]
+        const ph = state.phases[phase] || (state.phases[phase] = { score: 0, events: 0, active: false })
+        ph.score += weight + cls.bonus
+        ph.events += 1
+        state.totals.commits += 1
+        state.totals.successes += 1
+        state.totals.verified += 1
+        state.log.unshift({ t: c.ts, tool: "📜", phase, weight: weight + cls.bonus, status: "ok", detail: c.subject, verified: true })
+        if (state.log.length > 100) state.log.pop()
+        total += weight + cls.bonus
+        points.push([c.ts, total])
+        state.imported_commits.push(c.hash)
+      }
+
+      points.sort((a, b) => a[0] - b[0])
+      const deduped = []
+      for (const p of points) {
+        if (deduped.length && deduped[deduped.length - 1][0] === p[0]) deduped[deduped.length - 1] = p
+        else deduped.push(p)
+      }
+      state.history = deduped.slice(-300)
+      if (state.history.length === 0 || Date.now() - state.history[state.history.length - 1][0] >= 60_000) {
+        state.history.push([Date.now(), total])
+        if (state.history.length > 300) state.history.shift()
+      } else {
+        state.history[state.history.length - 1][1] = total
+      }
+      state.overall_pct = clampPct((total / totalGoal()) * 100)
+      checkMilestones()
+      state.updated_at = Date.now()
+      writeNow()
+      return { ok: true, imported: fresh.length, skipped: commits.length - fresh.length, total: Math.round(total * 10) / 10 }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  }
+
   const init = () => {
     load()
     seedState()
@@ -1085,10 +1155,10 @@ export function createTracker({ root, globalDir } = {}) {
     get phases() { return phases },
     get dir() { return rootPath },
     get stateFile() { return stateFile },
-    init, writeNow, recordTool, note, chatMessage, open, list,
+    init, writeNow, recordTool, note, chatMessage, open, list, importGitCommits,
     summary: () => summaryText(state, phases),
     resolveProject,
   }
 }
 
-export default { VERSION, createTracker, classify, parseSeedFile, scanSeedFiles, summaryText }
+export default { VERSION, createTracker, classify, gitPhase, parseSeedFile, scanSeedFiles, summaryText }

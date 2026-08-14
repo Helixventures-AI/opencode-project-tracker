@@ -56,7 +56,7 @@ checks["initialize ok + server info"] = init.result?.serverInfo?.name === "openc
 
 const tools = await send("tools/list", {});
 const names = tools.result.tools.map((t) => t.name);
-checks["tools/list has 6 tools"] = ["tracker_note", "tracker_summary", "tracker_open", "tracker_report", "tracker_init", "tracker_list"].every((n) => names.includes(n));
+checks["tools/list has 7 tools"] = ["tracker_note", "tracker_summary", "tracker_open", "tracker_report", "tracker_init", "tracker_list", "tracker_import_git"].every((n) => names.includes(n));
 
 const note = await send("tools/call", { name: "tracker_note", arguments: { text: "deploy verified", type: "success" } }); // cwd = mcp-proj-a
 checks["tracker_note ok"] = !note.result?.isError && note.result?.content?.[0]?.text?.includes("✅");
@@ -88,6 +88,32 @@ checks["tracker_report regenerates"] = !p2.result?.isError && p2.result?.content
 const stB = JSON.parse(fs.readFileSync(path.join(rootB, ".opencode/project-tracker/state.json"), "utf8"));
 checks["note landed in A (cwd)"] = JSON.parse(fs.readFileSync(path.join(rootA, ".opencode/project-tracker/state.json"), "utf8")).totals.verified === 1;
 checks["B seeded from progress.json"] = stB.totals.seeded === 1;
+
+/* tracker_import_git — build a real git repo in a new dir */
+const rootC = "C:/Users/MG/AppData/Local/Temp/opencode/mcp-proj-c";
+fs.rmSync(rootC, { recursive: true, force: true });
+fs.mkdirSync(rootC, { recursive: true });
+const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+const sh = (cmd, args, cwd) => new Promise((res) => {
+  const p = spawn(cmd, args, { cwd, env: gitEnv, stdio: ["ignore", "ignore", "ignore"] });
+  p.on("close", () => res());
+});
+await sh("git", ["init"], rootC);
+fs.writeFileSync(path.join(rootC, "c.txt"), "x");
+await sh("git", ["add", "."], rootC);
+await sh("git", ["commit", "-m", "feat: initial"], rootC);
+fs.writeFileSync(path.join(rootC, "c.txt"), "y");
+await sh("git", ["add", "."], rootC);
+await sh("git", ["commit", "-m", "test: verify"], rootC);
+const initC = await send("tools/call", { name: "tracker_init", arguments: { dir: rootC } });
+const impC = await send("tools/call", { name: "tracker_import_git", arguments: { project: "mcp-proj-c" } });
+checks["tracker_import_git: imports commits"] = !impC.result?.isError && impC.result?.content?.[0]?.text?.includes("Imported 2 git commits");
+const stC = JSON.parse(fs.readFileSync(path.join(rootC, ".opencode/project-tracker/state.json"), "utf8"));
+checks["tracker_import_git: phases filled"] = stC.totals.commits === 2 && stC.totals.verified >= 2 && (stC.phases.coding.score + stC.phases.testing.score) > 0;
+const impC2 = await send("tools/call", { name: "tracker_import_git", arguments: { project: "mcp-proj-c" } });
+checks["tracker_import_git: idempotent"] = !impC2.result?.isError && impC2.result?.content?.[0]?.text?.includes("0 git commits");
+const impBad = await send("tools/call", { name: "tracker_import_git", arguments: { project: "nope-xyz" } });
+checks["tracker_import_git: unknown -> error"] = impBad.result?.isError === true;
 
 let ok = true;
 for (const [k, v] of Object.entries(checks)) {

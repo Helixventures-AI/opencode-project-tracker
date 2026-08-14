@@ -10,6 +10,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { createTracker, summaryText, VERSION } from "../core/tracker-core.mjs";
 
 const serverInfo = { name: "opencode-project-tracker", version: VERSION };
@@ -75,6 +76,17 @@ const TOOLS = [
     description: "List all tracked projects (id, progress %, directory).",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "tracker_import_git",
+    description: "Import the project's git commit history into the phase scores (idempotent — re-runs only add new commits).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Optional: project name or path fragment (default: server working directory)" },
+        since: { type: "string", description: "Optional: only commits since this time (git-log format, e.g. \"2 weeks ago\")" },
+      },
+    },
+  },
 ];
 
 const resolveTracker = (args) => {
@@ -132,6 +144,22 @@ const callTool = async (name, args = {}) => {
       const rows = tr.list();
       if (!rows.length) return { text: "(no tracked projects yet)" };
       return { text: rows.map((o) => `- ${o.id}  ${o.pct}%  ${o.dir}`).join("\n") };
+    }
+    case "tracker_import_git": {
+      const tr = resolveTracker(args);
+      if (tr.error) return tr;
+      const gitArgs = ["log", "--pretty=format:%H|%ct|%s", "--all"];
+      if (args.since) gitArgs.push("--since", args.since);
+      const g = spawnSync("git", gitArgs, { cwd: tr.dir, encoding: "utf8" });
+      if (g.error || g.status !== 0) {
+        return { error: `git log failed in «${tr.dir}» (is it a git repo?): ${(g.stderr || "").trim().slice(0, 200)}` };
+      }
+      const commits = String(g.stdout || "")
+        .split("\n").filter(Boolean)
+        .map((line) => { const [hash, ts, ...rest] = line.split("|"); return { hash, ts, subject: rest.join("|") }; });
+      const r = tr.importGitCommits(commits);
+      if (!r.ok) return { error: r.error || "import failed" };
+      return { text: `✅ Imported ${r.imported} git commit${r.imported === 1 ? "" : "s"} into phases${r.skipped ? ` (${r.skipped} already imported — idempotent)` : ""} — overall ${tr.state.overall_pct}%, milestones ${tr.state.milestones.join(", ") || "—"}, total score ${r.total}` };
     }
     default:
       return { error: `unknown tool: ${name}` };

@@ -8,9 +8,11 @@
  *   pt report [dir|project]            regenerate dashboard (html+md) after progress files changed
  *   pt open [project]                  open the dashboard in the browser
  *   pt list                            list all tracked projects
+ *   pt import-git [--since "2 weeks ago"]  import git history into phases (idempotent)
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createTracker, summaryText, VERSION } from "../core/tracker-core.mjs";
 
@@ -24,7 +26,8 @@ Usage: pt <command> [args]
   note <type> <text>    record a note (types: success, error, warning, info, suggestion, solution, recommendation)
   report [dir|project]  regenerate dashboard + report after editing progress files
   open [project]        open the dashboard in the browser (default: current project)
-  list                  list all tracked projects`);
+  list                  list all tracked projects
+  import-git [since]    import git history into phases (idempotent; optional git-log since, e.g. "2 weeks ago")`);
 };
 
 const argToDir = (a) => {
@@ -99,6 +102,27 @@ const main = async () => {
       const rows = tr.list();
       if (!rows.length) { console.log("(no tracked projects yet — run `pt init`)"); break; }
       for (const o of rows) console.log(`  ${o.id}  ${o.pct}%  ${o.dir}`);
+      break;
+    }
+    case "import-git": {
+      const dir = process.cwd();
+      const gitArgs = ["log", "--pretty=format:%H|%ct|%s", "--all"];
+      if (first) gitArgs.push("--since", first);
+      const g = spawnSync("git", gitArgs, { cwd: dir, encoding: "utf8" });
+      if (g.error || g.status !== 0) {
+        console.error(`❌ git log failed (is «${dir}» a git repo?): ${(g.stderr || "").trim().slice(0, 200)}`);
+        process.exit(1);
+      }
+      const commits = String(g.stdout || "")
+        .split("\n").filter(Boolean)
+        .map((line) => { const [hash, ts, ...rest] = line.split("|"); return { hash, ts, subject: rest.join("|") }; });
+      const tr = createTracker({ root: dir });
+      tr.init();
+      const r = tr.importGitCommits(commits);
+      if (!r.ok) { console.error("❌", r.error); process.exit(1); }
+      console.log(`✅ Imported ${r.imported} commit${r.imported === 1 ? "" : "s"} into phases${r.skipped ? ` (${r.skipped} already imported — idempotent)` : ""}`);
+      console.log(`   overall: ${tr.state.overall_pct}% · milestones: ${tr.state.milestones.join(", ") || "—"} · total score: ${r.total}`);
+      console.log(`   Next: pt status · pt open`);
       break;
     }
     default:
