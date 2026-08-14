@@ -1,6 +1,0 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Tracker export</title>
-<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:24px auto;color:#111}h1{font-size:20px}table{border-collapse:collapse;width:100%;margin:12px 0}td,th{border:1px solid #ddd;padding:6px 10px;text-align:left;font-size:13px}th{background:#f4f4f5}.muted{color:#555;font-size:12px}</style></head>
-<body><h1>Project Tracker export — Default Project</h1>
-<p class="muted">Overall: 100% · Verified: 23 · Tests: 63 · Deploys: 0 · Errors: 48 · Tool calls: 658 · Growth: 41.3 pts/h</p>
-<table><tr><th>Phase</th><th>%</th><th>Score / Goal</th><th>Events</th></tr><tr><td>research</td><td>100%</td><td>45 / 1</td><td>115</td></tr><tr><td>setup</td><td>100%</td><td>4 / 1</td><td>4</td></tr><tr><td>coding</td><td>100%</td><td>416.6 / 1</td><td>404</td></tr><tr><td>testing</td><td>100%</td><td>128 / 1</td><td>63</td></tr><tr><td>docs</td><td>100%</td><td>34.8 / 1</td><td>32</td></tr><tr><td>deploy</td><td>0%</td><td>0 / 1</td><td>0</td></tr><tr><td>delivery</td><td>100%</td><td>98 / 1</td><td>40</td></tr></table>
-<p class="muted">Generated 2026-08-14T17:56:32.446Z — ai-project-tracker PRO</p></body></html>
