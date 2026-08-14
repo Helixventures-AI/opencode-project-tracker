@@ -76,11 +76,11 @@ See `web/README.md` for details.
 
 ```json
 {
-  "plugin": ["opencode-project-tracker"]
+  "plugin": ["ai-project-tracker"]
 }
 ```
 
-> Published package must exist on npm for this to work.
+> `npm i -g ai-project-tracker` also provides the `pt` CLI anywhere.
 
 ## Usage
 

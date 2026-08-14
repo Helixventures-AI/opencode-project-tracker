@@ -1,27 +1,55 @@
 ﻿{
-  "name": "opencode-project-tracker",
-  "version": "1.4.0",
-  "description": "Real-time project progress tracker for opencode: 7 phases, percentages, growth charts, ETA prediction, milestones, bilingual EN/FA dashboard toggle, multi-project comparison. Fully local and privacy-friendly.",
+  "name": "ai-project-tracker",
+  "version": "1.4.2",
+  "description": "Real-time project progress tracker for AI coding tools (opencode, Claude Code, Cursor, VS Code Copilot, web AI): 7 phases, percentages, growth charts, ETA, milestones, bilingual EN/FA dashboard. Zero npm dependencies, 100% local. Includes MCP server, Claude Code hooks, CLI and git-history import.",
   "type": "module",
-  "main": "project-tracker.ts",
+  "bin": {
+    "pt": "./cli/pt.mjs"
+  },
+  "main": "./core/tracker-core.mjs",
   "exports": {
-    ".": "./project-tracker.ts"
+    ".": "./core/tracker-core.mjs",
+    "./mcp": "./mcp/server.mjs",
+    "./cli": "./cli/pt.mjs",
+    "./plugin": "./project-tracker.ts"
   },
   "files": [
-    "project-tracker.ts"
+    "core/",
+    "cli/",
+    "mcp/",
+    "hooks/",
+    "web/",
+    "claude-commands/",
+    "project-tracker.ts",
+    "README.md",
+    "LICENSE",
+    "!core/test-core.mjs",
+    "!mcp/test-mcp.mjs",
+    "!hooks/claude-code/test-hook.mjs"
   ],
   "keywords": [
     "opencode",
     "plugin",
+    "claude-code",
+    "mcp",
     "project-tracker",
     "progress",
     "dashboard",
     "charts",
     "eta",
-    "milestones"
+    "milestones",
+    "tracking"
   ],
   "license": "MIT",
   "engines": {
     "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Helixventures-AI/opencode-project-tracker.git"
+  },
+  "homepage": "https://github.com/Helixventures-AI/opencode-project-tracker",
+  "bugs": {
+    "url": "https://github.com/Helixventures-AI/opencode-project-tracker/issues"
   }
 }

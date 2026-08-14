@@ -1,0 +1,9 @@
+node_modules/
+.opencode/
+.git/
+*.log
+.DS_Store
+package-lock.json
+core/test-core.mjs
+mcp/test-mcp.mjs
+hooks/claude-code/test-hook.mjs
