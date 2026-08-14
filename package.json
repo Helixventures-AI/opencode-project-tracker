@@ -1,10 +1,10 @@
-﻿{
+{
   "name": "ai-project-tracker",
   "version": "1.4.2",
   "description": "Real-time project progress tracker for AI coding tools (opencode, Claude Code, Cursor, VS Code Copilot, web AI): 7 phases, percentages, growth charts, ETA, milestones, bilingual EN/FA dashboard. Zero npm dependencies, 100% local. Includes MCP server, Claude Code hooks, CLI and git-history import.",
   "type": "module",
   "bin": {
-    "pt": "./cli/pt.mjs"
+    "pt": "cli/pt.mjs"
   },
   "main": "./core/tracker-core.mjs",
   "exports": {
@@ -46,7 +46,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Helixventures-AI/opencode-project-tracker.git"
+    "url": "git+https://github.com/Helixventures-AI/opencode-project-tracker.git"
   },
   "homepage": "https://github.com/Helixventures-AI/opencode-project-tracker",
   "bugs": {
