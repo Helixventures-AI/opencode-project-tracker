@@ -23,6 +23,15 @@
  *  امکانات نسخهٔ ۱.۲:
  *    - دکمهٔ تغییر زبان (فارسی / English) در داشبورد با ذخیرهٔ انتخاب کاربر
  *
+ *  امکانات نسخهٔ ۱.۳:
+ *    - فهرست فازهای کاملاً سفارشی (هر تعداد) با remap و default_phase
+ *    - وضعیت خودکار هر عملیات (موفق/خطا/هشدار) + شرح از خروجی ابزار
+ *    - ابزار tracker_note برای ثبت باگ‌ها، ارورها، موفقیت‌ها، پیشنهادها و راهکارها
+ *    - بخش توصیه‌ها و راهکارها: تحلیل خودکار خطاها + پیشنهادهای ثبت‌شده
+ *    - واردسازی خودکار پیشرفت موجود: جستجوی فایل‌های progress/roadmap
+ *      (مثل USL_PROGRESS.md و reports/progress-*.json) در ریشهٔ پروژه و
+ *      افزودن گام‌های انجام‌شده به امتیاز فازها — بدون نیاز به پیکربندی
+ *
  *  امنیت: هیچ داده‌ای خارج از سیستم ارسال نمی‌شود؛ همه‌چیز محلی است.
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -115,6 +124,7 @@ interface TrackerConfig {
   phases?: Array<Partial<PhaseDef> & { key: string }>
   remap?: Record<string, string>
   default_phase?: string
+  auto_seed?: boolean
 }
 
 const DEFAULT_CONFIG: TrackerConfig = { goals: {}, weights: {}, names: {} }
@@ -136,6 +146,7 @@ function loadConfig(...files: string[]): TrackerConfig {
         const valid = raw.phases.filter((p: any) => p && typeof p === "object" && typeof p.key === "string" && p.key)
         if (valid.length > 0) cfg.phases = valid
       }
+      if (typeof raw.auto_seed === "boolean") cfg.auto_seed = raw.auto_seed
     } catch { /* bad config file → ignore */ }
   }
   return cfg
@@ -161,6 +172,136 @@ function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
   }))
 }
 
+/* ── واردسازی خودکار پیشرفت موجود ───────────────────────────────────────── */
+interface SeedItem { id: string; phase: string; score: number; status: string; detail: string }
+
+const normKey = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9\u0600-\u06ff\u200c]+/g, "")
+
+const findPhase = (phases: PhaseDef[], v: string): string | null => {
+  const n = normKey(v)
+  if (!n) return null
+  for (const p of phases) if (normKey(p.key) === n) return p.key
+  for (const p of phases) if (normKey(p.en) === n || normKey(p.fa) === n) return p.key
+  return null
+}
+
+function scanSeedFiles(root: string): string[] {
+  const out: string[] = []
+  const cands: string[] = []
+  const push = (d: string, name: string) => { if (/progress|roadmap/i.test(name)) cands.push(path.join(d, name)) }
+  try {
+    for (const name of fs.readdirSync(root)) push(root, name)
+    for (const sub of ["reports", "docs", "planning", "plans", "progress"]) {
+      const d = path.join(root, sub)
+      if (!fs.existsSync(d)) continue
+      try {
+        for (const name of fs.readdirSync(d)) push(d, name)
+        if (sub === "reports") {
+          for (const sub2 of fs.readdirSync(d)) {
+            const d2 = path.join(d, sub2)
+            try { if (fs.statSync(d2).isDirectory()) for (const name of fs.readdirSync(d2)) push(d2, name) } catch { /* noop */ }
+          }
+        }
+      } catch { /* noop */ }
+    }
+  } catch { /* noop */ }
+  for (const c of cands) {
+    try { if (fs.statSync(c).isFile()) out.push(c) } catch { /* noop */ }
+  }
+  return out
+}
+
+function parseSeedFile(filePath: string, phases: PhaseDef[]): SeedItem[] {
+  const items: SeedItem[] = []
+  const pushItem = (id: string, phase: string, score: number, status: string, detail: string) => {
+    const canon = findPhase(phases, phase)
+    if (!canon) return
+    items.push({ id, phase: canon, score, status, detail: String(detail || "").slice(0, 140) })
+  }
+  let raw = ""
+  try { raw = fs.readFileSync(filePath, "utf8") } catch { return items }
+  const isMd = /\.(md|markdown)$/i.test(filePath) || /^\s*[-*]\s*\[[ xX.oO]\]/m.test(raw) || /^#{1,3}\s/m.test(raw)
+  if (isMd) {
+    let cur = ""
+    for (const line of raw.split("\n")) {
+      const h = line.match(/^#{1,3}\s+(.*)$/)
+      if (h) {
+        const p = findPhase(phases, h[1].replace(/[#*`]+/g, "").trim())
+        if (p) cur = p
+        continue
+      }
+      const cl = line.match(/^\s*[-*]\s*\[([ xX.oO])\]\s*(.*)$/)
+      if (!cl) continue
+      let text = cl[2]
+      const pm = text.match(/\(phase:\s*([^)]+)\)/i)
+      if (pm) { const p = findPhase(phases, pm[1]); if (p) cur = p; text = text.replace(pm[0], "").trim() }
+      if (!cur) continue
+      const done = /[xXoO]/.test(cl[1])
+      pushItem("md:" + cur + ":" + normKey(text), cur, done ? 1 : 0, done ? "done" : "todo", text)
+    }
+    return items
+  }
+  let data: any = null
+  try { data = JSON.parse(raw) } catch { return items }
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    if (Array.isArray(data.steps)) data = data.steps
+    else if (data.phases && typeof data.phases === "object") {
+      for (const [k, v] of Object.entries(data.phases)) pushItem("map:" + k, k, typeof v === "number" ? v : 1, "done", k)
+      return items
+    }
+  }
+  if (Array.isArray(data)) {
+    data.forEach((it: any, i: number) => {
+      if (!it || typeof it !== "object") return
+      const phase = it.phase ?? it.fase ?? it.stage ?? it.category ?? it.area ?? it.key ?? ""
+      const status = String(it.status ?? it.state ?? "").toLowerCase()
+      const done = status === "" || /done|complete|committed|commited|ok|شده|کامل|✅|true/.test(status)
+      const score = done ? (Number(it.score ?? it.points ?? it.weight ?? it.value) || 1) : 0
+      const detail = String(it.name ?? it.title ?? it.task ?? phase)
+      pushItem(it.id != null ? String(it.id) : "i" + i + ":" + normKey(detail), phase, score, done ? "done" : "todo", detail)
+    })
+  }
+  return items
+}
+
+function seedState(state: State, phases: PhaseDef[], cfg: TrackerConfig, root: string): number {
+  if (cfg.auto_seed === false) return 0
+  let added = 0
+  try {
+    for (const filePath of scanSeedFiles(root)) {
+      let mtime = 0
+      try { mtime = fs.statSync(filePath).mtimeMs } catch { continue }
+      const entry = state.seeded[filePath] || { ids: [], mtime: 0 }
+      if (entry.mtime === mtime) continue
+      const items = parseSeedFile(filePath, phases)
+      if (!items.length) continue
+      const known = new Set(entry.ids)
+      for (const it of items) {
+        if (known.has(it.id)) continue
+        known.add(it.id)
+        const ph = state.phases[it.phase] || (state.phases[it.phase] = { score: 0, events: 0, active: false })
+        ph.score += it.score
+        ph.events += 1
+        state.totals.seeded += 1
+        if (it.status !== "todo") {
+          state.log.unshift({ t: Date.now(), tool: "📥", phase: it.phase, weight: it.score, status: it.score > 0 ? "ok" : "warn", detail: it.detail })
+          if (state.log.length > 100) state.log.pop()
+        }
+        added += 1
+      }
+      entry.ids = [...known]
+      entry.mtime = mtime
+      state.seeded[filePath] = entry
+    }
+    if (added > 0 && state.history.length <= 1 && (state.history[0]?.[1] || 0) === 0) {
+      let score = 0, goal = 0
+      for (const p of phases) { score += state.phases[p.key]?.score || 0; goal += p.goal }
+      state.history = [[Date.now(), goal ? Math.round((score / goal) * 100) : 0]]
+    }
+  } catch { /* noop */ }
+  return added
+}
+
 /* ── ساختار وضعیت ───────────────────────────────────────────────────────── */
 interface PhaseState { score: number; events: number; active: boolean }
 interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string; kind?: string }
@@ -184,7 +325,9 @@ interface State {
     errors: number
     successes: number
     suggestions: number
+    seeded: number
   }
+  seeded: Record<string, { ids: string[]; mtime: number }>
   history: [number, number][]
   growth_rate_per_hour: number
   eta_minutes: number | null
@@ -205,8 +348,9 @@ const emptyState = (project: string, keys: string[]): State => {
     totals: {
       tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0,
       deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, sessions: 0,
-      errors: 0, successes: 0, suggestions: 0,
+      errors: 0, successes: 0, suggestions: 0, seeded: 0,
     },
+    seeded: {},
     history: [[now, 0]],
     growth_rate_per_hour: 0,
     eta_minutes: null,
@@ -370,7 +514,7 @@ ${rows}
 ## آمار
 
 - ابزار: ${t.tool_calls} · ویرایش: ${t.edits} · تست: ${t.tests} · استقرار: ${t.deploys} · مستندات: ${t.docs} · کامیت: ${t.commits} · چت: ${t.messages} · نشست: ${t.sessions}
-- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors} · 💡 پیشنهاد: ${t.suggestions}
+- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors} · 💡 پیشنهاد: ${t.suggestions}${t.seeded > 0 ? ` · 📥 واردشده: ${t.seeded} گام (${Object.keys(state.seeded).map((p) => path.basename(p)).join("، ")})` : ""}
 
 ## توصیه‌ها و راهکارها
 
@@ -401,6 +545,13 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const subFa = `به‌روزرسانی زنده · ${duration} زمان سپری‌شده`
   const dateEn = new Date(state.updated_at).toLocaleString("en-US")
   const dateFa = new Date(state.updated_at).toLocaleString("fa-IR")
+
+  const seedFiles = Object.keys(state.seeded).map((p) => path.basename(p))
+  const seedEn = seedFiles.join(", ")
+  const seedFa = seedFiles.join("، ")
+  const seedLineHtml = state.totals.seeded > 0
+    ? `<div class="seed-line" data-en="📥 Imported: ${state.totals.seeded} steps from ${seedEn}" data-fa="📥 واردشده: ${state.totals.seeded} گام از ${seedFa}">📥 واردشده: ${state.totals.seeded} گام از ${seedFa}</div>`
+    : ""
 
   const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
 
@@ -529,6 +680,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     ["Errors", "خطاها", String(t.errors), "#fb7185"],
     ["Research", "پژوهش", String(t.research), "#f59e0b"],
     ["Suggestions", "پیشنهادها و راهکارها", String(t.suggestions), "#a3e635"],
+    ["Imported", "گام‌های واردشده", String(t.seeded), "#22d3ee"],
   ]
   const statsHtml = stats.map(([en, fa, val, color]) => `
     <div class="stat" style="--acc:${color}">
@@ -569,6 +721,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
   .proj-name{font-size:15px;font-weight:600;color:#7df3c8;margin-top:6px}
   .rep-date{color:var(--muted);font-size:12.5px;margin-top:3px}
+  .seed-line{color:var(--muted);font-size:11.5px;margin-top:4px;opacity:.85}
   .pills{display:flex;gap:10px;flex-wrap:wrap}
   .pill{background:var(--glass);border:1px solid var(--stroke);border-radius:999px;padding:8px 16px;font-size:13px;display:flex;gap:8px;align-items:center}
   .pill b{color:#7df3c8}
@@ -649,8 +802,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     .card{background:#fff;backdrop-filter:none;border:1px solid #ddd;break-inside:avoid}
     h1{color:#111;background:none;-webkit-background-clip:unset}
     .proj-name{color:#0a7d52}
-    .sub,.rep-date,.stat-fa,.phase-desc,.phase-meta,.log-t,.log-phase,.ms-legend,footer{color:#555}
-    .stat-val{color:#0a7d52}
+    .sub,.rep-date,.stat-fa,.phase-desc,.phase-meta,.log-t,.log-phase,.ms-legend,footer{color:#555}    .stat-val{color:#0a7d52}
     .pct{color:#111}
     .bar{background:#e5e7eb}
     .status-chip{border-color:#ccc}
@@ -666,6 +818,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
       <h1 data-en="📊 Project Tracker" data-fa="📊 ردیاب پروژه">📊 ردیاب پروژه</h1>
       <div class="proj-name">🗂️ ${state.project}</div>
       <div class="rep-date" data-en="📅 Report date: ${dateEn}" data-fa="📅 تاریخ گزارش: ${dateFa}">📅 تاریخ گزارش: ${dateFa}</div>
+      ${seedLineHtml}
       <div class="sub" data-en="${subEn}" data-fa="${subFa}">${subFa}</div>
     </div>
     <div class="pills">
@@ -748,7 +901,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.3.2 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.3.3 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.3 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.3 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
@@ -816,6 +969,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         if (!Array.isArray(state.history)) state.history = [[Date.now(), 0]]
         if (!Array.isArray(state.milestones)) state.milestones = []
         if (!Array.isArray(state.log)) state.log = []
+        if (!state.seeded || typeof state.seeded !== "object") state.seeded = {}
       }
     } catch { /* state file corrupt → start fresh */ }
   }
@@ -885,6 +1039,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
   }
 
   load()
+  seedState(state, phases, cfg, root)
   writeNow()
 
   const timer = setInterval(() => flush(), 5000)
@@ -953,7 +1108,10 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
 
     "command.execute.before": async (input: any) => {
       try {
-        if (String(input?.command || "") === "tracker") writeNow()
+        if (String(input?.command || "") === "tracker") {
+          seedState(state, phases, cfg, root)
+          writeNow()
+        }
       } catch { /* noop */ }
     },
 
