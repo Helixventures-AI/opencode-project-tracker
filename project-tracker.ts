@@ -37,6 +37,7 @@
  */
 
 import { type Plugin, tool } from "@opencode-ai/plugin"
+import { exec } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -333,6 +334,7 @@ interface State {
     research: number
     commits: number
     messages: number
+    assistant_messages: number
     sessions: number
     errors: number
     successes: number
@@ -348,6 +350,7 @@ interface State {
   overall_pct: number
   milestones: number[]
   log: LogEvent[]
+  chat_log: { t: number; text: string }[]
 }
 
 const emptyState = (project: string, keys: string[]): State => {
@@ -363,6 +366,7 @@ const emptyState = (project: string, keys: string[]): State => {
       tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0,
       deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, sessions: 0,
       errors: 0, successes: 0, suggestions: 0, seeded: 0, verified: 0,
+      assistant_messages: 0,
     },
     seeded: {},
     issues: [],
@@ -372,6 +376,7 @@ const emptyState = (project: string, keys: string[]): State => {
     overall_pct: 0,
     milestones: [],
     log: [],
+    chat_log: [],
   }
 }
 
@@ -435,6 +440,14 @@ function relTime(ts: number, now: number): string {
 }
 
 const esc = (s: string) => String(s).replace(/[<>&]/g, (c) => (c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"))
+
+/* استخراج متن از content پیام (رشته یا آرایهٔ part های opencode) */
+const msgText = (content: any): string => {
+  if (!content) return ""
+  if (typeof content === "string") return content
+  if (Array.isArray(content)) return content.map((p: any) => (typeof p === "string" ? p : p?.text || "")).join(" ")
+  return String(content)
+}
 
 function describeTool(toolName: string, args: any, outText: string): { detail: string; status: string } {
   const txt = String(outText || "").trim()
@@ -549,6 +562,10 @@ ${rows}
 
 - ابزار: ${t.tool_calls} · ویرایش: ${t.edits} · تست: ${t.tests} · استقرار: ${t.deploys} · مستندات: ${t.docs} · کامیت: ${t.commits} · چت: ${t.messages} · نشست: ${t.sessions}
 - ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors} · 💡 پیشنهاد: ${t.suggestions} · ⭐ تأییدشده: ${t.verified}${t.seeded > 0 ? ` · 📥 واردشده: ${t.seeded} گام (${Object.keys(state.seeded).map((p) => path.basename(p)).join("، ")})` : ""}
+
+## خلاصهٔ کارهای اخیر (دستیار)
+
+${state.chat_log.slice(0, 8).map((c) => `- 💬 ${c.text} — ${new Date(c.t).toLocaleString()}`).join("\n") || "- (هنوز پیامی ثبت نشده)"}
 
 ${state.issues.length > 0 ? `## ⚠️ اخطارها و موارد نادیده‌شده
 
@@ -714,6 +731,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     ["Docs ops", "مستندسازی", String(t.docs), "#f472b6"],
     ["Commits", "کامیت", String(t.commits), "#fb7185"],
     ["Messages", "پیام‌های چت", String(t.messages), "#818cf8"],
+    ["Assistant messages", "پیام‌های دستیار", String(t.assistant_messages), "#22d3ee"],
     ["Sessions", "نشست‌ها", String(t.sessions), "#38bdf8"],
     ["Successes", "موفقیت‌ها", String(t.successes), "#34d399"],
     ["Errors", "خطاها", String(t.errors), "#fb7185"],
@@ -923,6 +941,14 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
         <div style="font-size:13px;margin-bottom:8px" data-en="🕘 Recent activity" data-fa="🕘 آخرین فعالیت‌ها">🕘 آخرین فعالیت‌ها</div>
         ${logHtml}
       </div>
+
+      <div class="card" style="margin-top:18px">
+        <div style="font-size:13px;margin-bottom:8px" data-en="📋 Recent work summary (assistant)" data-fa="📋 خلاصهٔ کارهای اخیر (دستیار)">📋 خلاصهٔ کارهای اخیر (دستیار)</div>
+        ${state.chat_log.slice(0, 8).map((c) => {
+          const rel = relTime(c.t, nowMs)
+          return `<div class="log-row"><span>💬</span><span class="log-detail" title="${esc(c.text)}">${esc(c.text)}</span><span class="log-t" data-en="${rel} ago" data-fa="${rel} قبل">${rel} قبل</span></div>`
+        }).join("") || `<div class="log-row muted" data-en="No assistant messages yet" data-fa="هنوز پیامی از دستیار ثبت نشده">هنوز پیامی از دستیار ثبت نشده</div>`}
+      </div>
     </div>
 
     <div>
@@ -942,7 +968,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.3.5 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.5 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.5 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.3.6 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.6 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.6 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
@@ -1019,6 +1045,8 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         if (!state.seeded || typeof state.seeded !== "object") state.seeded = {}
         if (!Array.isArray(state.issues)) state.issues = []
         if (typeof state.totals.verified !== "number") state.totals.verified = 0
+        if (typeof state.totals.assistant_messages !== "number") state.totals.assistant_messages = 0
+        if (!Array.isArray(state.chat_log)) state.chat_log = []
       }
     } catch {
       try {
@@ -1155,11 +1183,22 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
 
     "chat.message": async (_input: any, output: any) => {
       try {
-        if (output?.message?.role === "user") {
+        const role = output?.message?.role
+        if (role === "user") {
           state.totals.messages += 1
           state.updated_at = Date.now()
           dirty = true
           flush()
+        } else if (role === "assistant") {
+          const text = msgText(output?.message?.content).replace(/[\r\n\t]+/g, " ").trim().slice(0, 160)
+          if (text) {
+            state.totals.assistant_messages += 1
+            state.chat_log.unshift({ t: Date.now(), text })
+            if (state.chat_log.length > 20) state.chat_log.pop()
+            state.updated_at = Date.now()
+            dirty = true
+            flush()
+          }
         }
       } catch { /* noop */ }
     },
@@ -1206,6 +1245,37 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
             return "✅ Note recorded in the project tracker."
           } catch {
             return "Note recording failed."
+          }
+        },
+      }),
+
+      tracker_open: tool({
+        description: "Open the project tracker dashboard (report.html) of any tracked project. Without args: the current project. With a project name or path fragment: that project's dashboard (resolved from the global project registry).",
+        args: {
+          project: tool.schema.string().describe("Optional: project name or path fragment of another tracked project").optional(),
+        },
+        async execute(args: any) {
+          try {
+            const all = readOtherProjects()
+            let dir = root
+            const q = String(args?.project || "").trim()
+            if (q) {
+              const lq = q.toLowerCase()
+              const hit = all.find((o) => String(o.id).toLowerCase() === lq || String(o.id).toLowerCase().includes(lq) || String(o.dir || "").toLowerCase().includes(lq))
+              if (!hit) return `پروژهٔ «${q}» یافت نشد. پروژه‌های ثبت‌شده: ${all.map((o) => o.id).join("، ") || "(هیچ)"}`
+              dir = hit.dir
+            }
+            const html = path.join(dir, ".opencode", "project-tracker", "report.html")
+            if (!fs.existsSync(html)) return `داشبوردی برای این پروژه پیدا نشد: ${html}`
+            if (!process.env.PT_NO_OPEN) {
+              const cmd = process.platform === "win32"
+                ? `start "" "${html}"`
+                : process.platform === "darwin" ? `open "${html}"` : `xdg-open "${html}"`
+              exec(cmd, { cwd: dir }, () => { /* noop */ })
+            }
+            return `✅ داشبورد باز شد: ${html}`
+          } catch {
+            return "خطا در باز کردن داشبورد."
           }
         },
       }),

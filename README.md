@@ -200,6 +200,22 @@ Shown as amber ⚠️ lines under the header and in the **⚠️ اخطارها 
 - **Milestones on imported data** — importing an existing project's progress (auto-seed) now fires the 25/50/75/100% milestones right away, even before any new tool call.
 - **Idle detection** — if the project has been inactive for 2+ hours, the dashboard shows a ⏸️ recommendation ("پروژه از N ساعت پیش بدون فعالیت است") to resume the active phase. `updated_at` now reflects real activity (tool calls, notes, user messages), not file flushes.
 
+## Recent work summary (assistant messages)
+
+Every assistant reply is captured (rolled, newest 20, 160 chars each) and shown in the **📋 خلاصهٔ کارهای اخیر (دستیار)** section of the dashboard and `report.md` — a quick narrative of what was actually done, next to the raw tool-activity feed. Also counted as a dedicated stat card (💬 پیامهای دستیار).
+
+## /tracker for any tracked project
+
+`/tracker` (or `/t`) now accepts an argument — a project **name or path fragment** — and shows that project's summary instead of the current one:
+
+```
+/tracker                    → current project
+/tracker proj-b             → project whose id/name/path matches "proj-b"
+/tracker my-other-project   → partial match against the global registry
+```
+
+The new built-in `tracker_open` tool resolves the project from the global registry (`~/.config/opencode/project-tracker/projects.json`) and opens its `report.html` in the browser — no manual path guessing. Unknown projects return the list of tracked projects so you can pick one.
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
