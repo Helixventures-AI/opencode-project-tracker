@@ -1,6 +1,6 @@
 {
   "name": "ai-project-tracker",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Real-time project progress tracker for AI coding tools (opencode, Claude Code, Cursor, VS Code Copilot, web AI): 7 phases, percentages, growth charts, ETA, milestones, bilingual EN/FA dashboard. Zero npm dependencies, 100% local. Includes MCP server, Claude Code hooks, CLI and git-history import.",
   "type": "module",
   "bin": {
