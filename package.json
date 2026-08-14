@@ -1,0 +1,25 @@
+{
+  "name": "opencode-project-tracker",
+  "version": "1.0.0",
+  "description": "Real-time project progress tracker for opencode: phases, percentages, growth charts and a modern HTML dashboard. Fully local and privacy-friendly.",
+  "type": "module",
+  "main": "project-tracker.ts",
+  "exports": {
+    ".": "./project-tracker.ts"
+  },
+  "files": [
+    "project-tracker.ts"
+  ],
+  "keywords": [
+    "opencode",
+    "plugin",
+    "project-tracker",
+    "progress",
+    "dashboard",
+    "charts"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
