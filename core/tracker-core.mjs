@@ -8,7 +8,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { exec } from "node:child_process"
 
-export const VERSION = "1.4.3"
+export const VERSION = "1.4.4"
 
 export const PHASE_DEFAULTS = [
   { key: "research", en: "Research & Planning", fa: "پژوهش و برنامه‌ریزی", desc_en: "Requirements gathering, feasibility, architecture decisions, scope and roadmap.", desc_fa: "جمع‌آوری نیازمندی‌ها، امکان‌سنجی، تصمیم‌های معماری، دامنه و نقشهٔ راه.", goal: 15, color: "#38bdf8" },
