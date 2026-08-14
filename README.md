@@ -30,14 +30,26 @@ Optionally add the `/tracker` command (shows a text summary in chat + opens the 
 
 - `.opencode/command/tracker.md` or `~/.config/opencode/command/tracker.md`
 
-### Option B — MCP server (Cursor, Windsurf, Cline, Claude Desktop, Copilot, ...)
+### Option B — MCP server (Cursor, Windsurf, Cline, Claude Desktop, Copilot, Claude Code, ...)
 
-Register `mcp/server.mjs` as a **stdio MCP server** (zero dependencies — no npm install):
+Register `mcp/server.mjs` as a **stdio MCP server** (zero dependencies — no npm install).
+
+**One-command installer** (merge-safe, idempotent, backs up before editing):
+
+```sh
+node mcp/install.mjs                # registers in: Claude Code, Claude Desktop, Cursor, Windsurf
+node mcp/install.mjs --vscode       # also register in the current workspace (VS Code Copilot)
+node mcp/install.mjs --list         # show registration status
+```
+
+Manual registration (equivalent):
 
 - **Cursor**: Settings → MCP → Add → Command: `node /path/to/repo/mcp/server.mjs`
 - **Windsurf**: Settings → MCP → Add → same command
 - **Cline** (VS Code): MCP Servers → Add → stdio → `node /path/to/repo/mcp/server.mjs`
 - **Claude Desktop**: `claude_desktop_config.json` → `"mcpServers": { "project-tracker": { "command": "node", "args": ["/path/to/repo/mcp/server.mjs"] } }`
+- **Claude Code**: `~/.claude.json` → `"mcpServers"` (same shape) or `claude mcp add`
+- **VS Code Copilot**: workspace `.vscode/mcp.json` → `"mcpServers"` (same shape)
 
 Then ask your AI to call the tools (`tracker_summary`, `tracker_note`, `tracker_open`, ...). The server uses the working directory as the project; pass `project: "name-or-path-fragment"` to target any tracked project.
 
