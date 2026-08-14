@@ -170,6 +170,30 @@ Statuses `done`/`complete`/`committed`/`ok`/`شده` score points; `todo` items 
 
 **Behavior:** imports are idempotent — restarting opencode never double-counts (tracked by file mtime + item ids); when a progress file changes, new steps are imported automatically. The header shows `📥 واردشده: N گام از <files>`, a stat card counts imported steps, and the chart starts from the imported total. Disable with `"auto_seed": false` in `config.json`.
 
+## Verified outcomes (results, not just activity)
+
+Activity counting is complemented by **verified outcomes** — real results earn bonus points and a ★ badge:
+
+| Signal | Bonus | Phase |
+|---|---|---|
+| `test result: ok. N passed` / tests passed | +2 | testing |
+| successful `docker push` / `compose up` / `kubectl apply` / `helm install` | +2 | deploy |
+| successful `git commit` / `git push` / `gh pr` | +1 | delivery |
+| `Finished` build (`cargo build`, `make`, `compile`) | +1 | coding/delivery |
+| `tracker_note` with type `success` | +1 | active phase |
+
+Counted as **⭐ گامهای تأییدشده** (Verified) — stat card, star in the activity log, and a dedicated recommendation. A `success` note asserts a verified outcome; `error` notes assert failures. Failed runs (`test result: FAILED`, `denied`, `refused`, `forbidden`, `error`) never earn bonuses and count as errors.
+
+## Warning reporting (no more silent failures)
+
+Anything the plugin skips is now visible instead of silent:
+
+- unreadable/invalid `config.json` → ⚠️ warning line in dashboard + `report.md`
+- progress files with unknown formats → "ورود داده رد شد" with skipped count
+- steps whose phase doesn't match any project phase → "N گام رد شد — فاز همخوانی ندارد"
+
+Shown as amber ⚠️ lines under the header and in the **⚠️ اخطارها و موارد نادیدهشده** section of `report.md` (last 5, capped at 20).
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
