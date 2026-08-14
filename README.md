@@ -1,5 +1,7 @@
 # ai-project-tracker
 
+> **🌐 [English](README.md) · [فارسی (Persian)](README.fa.md)**
+
 Real-time project progress tracker **for AI coding tools** — opencode, Claude Code, any MCP-capable IDE (Cursor, Windsurf, Cline, Claude Desktop, VS Code Copilot, ...) and web AI platforms (Replit, Lovable, Bolt, v0) via a file protocol.
 
 Tracks every operation (edit, test, deploy, docs, commit, ...) during a coding session, maps it to one of **7 project phases**, computes per-phase and overall **percentages**, a **growth rate**, and renders a **modern HTML dashboard** with SVG charts — fully **local, no data leaves your machine**.
@@ -18,6 +20,16 @@ Tracks every operation (edit, test, deploy, docs, commit, ...) during a coding s
 All adapters share the same **core engine** (`core/tracker-core.mjs`) and the same state files, so the same project can be tracked from multiple tools without conflicts.
 
 ## Install
+
+### 📚 Detailed platform guides
+
+| Platform | Guide |
+|---|---|
+| opencode | [`docs/OPENCODE.md`](docs/OPENCODE.md) — plugin placement, `/tracker` command, npm install |
+| Claude Code | [`docs/CLAUDE-CODE.md`](docs/CLAUDE-CODE.md) — hooks, MCP, `/tracker`, troubleshooting |
+| Any MCP client (Cursor, Windsurf, Cline, Claude Desktop, Copilot) | [`docs/MCP.md`](docs/MCP.md) — one-command installer, manual JSON per client, tool reference |
+| CLI | [`docs/CLI.md`](docs/CLI.md) — full command reference with examples |
+| Web AI platforms (Replit, Lovable, Bolt, v0) | [`docs/WEB-PLATFORMS.md`](docs/WEB-PLATFORMS.md) — file protocol, agent instructions |
 
 ### Option A — opencode (plugin)
 
