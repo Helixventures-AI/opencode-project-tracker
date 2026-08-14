@@ -112,9 +112,14 @@ interface TrackerConfig {
   goals: Record<string, number>
   weights: Record<string, number>
   names: Record<string, { en: string; fa: string }>
+  phases?: Array<Partial<PhaseDef> & { key: string }>
+  remap?: Record<string, string>
+  default_phase?: string
 }
 
 const DEFAULT_CONFIG: TrackerConfig = { goals: {}, weights: {}, names: {} }
+
+const PALETTE = ["#38bdf8", "#818cf8", "#34d399", "#fbbf24", "#f472b6", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#4ade80"]
 
 function loadConfig(...files: string[]): TrackerConfig {
   const cfg: TrackerConfig = { goals: {}, weights: {}, names: {} }
@@ -125,12 +130,29 @@ function loadConfig(...files: string[]): TrackerConfig {
       if (raw.goals && typeof raw.goals === "object") for (const [k, v] of Object.entries(raw.goals)) if (typeof v === "number") cfg.goals[k] = v
       if (raw.weights && typeof raw.weights === "object") for (const [k, v] of Object.entries(raw.weights)) if (typeof v === "number") cfg.weights[k] = v
       if (raw.names && typeof raw.names === "object") for (const [k, v] of Object.entries(raw.names)) if (v && typeof v === "object" && typeof (v as any).en === "string") cfg.names[k] = { en: (v as any).en, fa: (v as any).fa }
+      if (raw.remap && typeof raw.remap === "object") cfg.remap = { ...(cfg.remap || {}), ...raw.remap }
+      if (typeof raw.default_phase === "string") cfg.default_phase = raw.default_phase
+      if (Array.isArray(raw.phases)) {
+        const valid = raw.phases.filter((p: any) => p && typeof p === "object" && typeof p.key === "string" && p.key)
+        if (valid.length > 0) cfg.phases = valid
+      }
     } catch { /* bad config file → ignore */ }
   }
   return cfg
 }
 
 function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
+  if (cfg.phases && cfg.phases.length > 0) {
+    return cfg.phases.map((p, i) => ({
+      key: p.key,
+      en: cfg.names[p.key]?.en ?? p.en ?? p.key,
+      fa: cfg.names[p.key]?.fa ?? p.fa ?? p.key,
+      desc_en: p.desc_en ?? "",
+      desc_fa: p.desc_fa ?? "",
+      goal: cfg.goals[p.key] ?? p.goal ?? 10,
+      color: p.color ?? PALETTE[i % PALETTE.length],
+    }))
+  }
   return PHASE_DEFAULTS.map((p) => ({
     ...p,
     goal: cfg.goals[p.key] ?? p.goal,
@@ -168,9 +190,9 @@ interface State {
   log: LogEvent[]
 }
 
-const emptyState = (project: string): State => {
+const emptyState = (project: string, keys: string[]): State => {
   const phases: Record<string, PhaseState> = {}
-  for (const p of PHASE_DEFAULTS) phases[p.key] = { score: 0, events: 0, active: false }
+  for (const k of keys) phases[k] = { score: 0, events: 0, active: false }
   const now = Date.now()
   return {
     project,
@@ -662,7 +684,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
 
   let cfg: TrackerConfig = loadConfig(globalCfgFile, projectCfgFile)
   let phases: PhaseDef[] = effectivePhases(cfg)
-  let state: State = emptyState(path.basename(root))
+  let state: State = emptyState(path.basename(root), phases.map((p) => p.key))
   let dirty = false
   let lastFlush = 0
 
@@ -673,9 +695,10 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     try {
       if (fs.existsSync(stateFile)) {
         const raw = JSON.parse(fs.readFileSync(stateFile, "utf8"))
-        state = { ...emptyState(path.basename(root)), ...raw }
-        state.phases = { ...emptyState(path.basename(root)).phases, ...(raw.phases || {}) }
-        state.totals = { ...emptyState(path.basename(root)).totals, ...(raw.totals || {}) }
+        const keys = phases.map((p) => p.key)
+        state = { ...emptyState(path.basename(root), keys), ...raw }
+        state.phases = { ...emptyState(path.basename(root), keys).phases, ...(raw.phases || {}) }
+        state.totals = { ...emptyState(path.basename(root), keys).totals, ...(raw.totals || {}) }
         if (!Array.isArray(state.history)) state.history = [[Date.now(), 0]]
         if (!Array.isArray(state.milestones)) state.milestones = []
         if (!Array.isArray(state.log)) state.log = []
@@ -709,6 +732,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     try {
       cfg = loadConfig(globalCfgFile, projectCfgFile)
       phases = effectivePhases(cfg)
+      for (const p of phases) if (!state.phases[p.key]) state.phases[p.key] = { score: 0, events: 0, active: false }
       state.updated_at = Date.now()
       state.growth_rate_per_hour = growthRate(state.history)
       state.overall_pct = clampPct((totalScore() / totalGoal()) * 100)
@@ -757,7 +781,11 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
       try {
         const toolName = input?.tool
         const cls = classify(toolName, input?.args)
-        let { phase, weight } = cls
+        let phase = cls.phase
+        const mapped = cfg.remap?.[phase] || phase
+        const phaseKeys = new Set(phases.map((p) => p.key))
+        phase = phaseKeys.has(mapped) ? mapped : cfg.default_phase && phaseKeys.has(cfg.default_phase) ? cfg.default_phase : (phases[0]?.key || mapped)
+        let weight = cls.weight
         if (typeof cfg.weights[toolName] === "number") weight = cfg.weights[toolName]
         const ph = state.phases[phase] || (state.phases[phase] = { score: 0, events: 0, active: false })
 
