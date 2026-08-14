@@ -88,6 +88,27 @@ Create `config.json` in `.opencode/project-tracker/` (per-project) or `~/.config
 - `weights` — override the weight of a specific tool (e.g. `edit`, `bash`, `read`, `write`, `task`)
 - `names` — rename a phase in the dashboard (EN/FA)
 
+### Custom phase lists (any number of phases)
+
+If your project has a different workflow, replace the 7 default phases entirely with your own — more or fewer, any count:
+
+```json
+{
+  "phases": [
+    { "key": "planning", "en": "Planning", "fa": "برنامه‌ریزی", "desc_en": "Scope", "desc_fa": "دامنه", "goal": 20 },
+    { "key": "build",    "en": "Build",    "fa": "ساخت",       "desc_en": "Code", "desc_fa": "کد",   "goal": 50 },
+    { "key": "qa",       "en": "QA",       "fa": "کنترل کیفیت","desc_en": "Tests","desc_fa": "تست‌ها","goal": 20 },
+    { "key": "release",  "en": "Release",  "fa": "انتشار",     "desc_en": "Ship", "desc_fa": "تحویل", "goal": 10 }
+  ],
+  "remap": { "coding": "build", "testing": "qa", "deploy": "release", "delivery": "release" },
+  "default_phase": "planning"
+}
+```
+
+- `phases` — your own list (fields `key`, `en`, `fa`, `desc_en`, `desc_fa`, `goal`, `color`; `key` is required, the rest fall back to defaults, colors auto-assigned from a palette)
+- `remap` — map the built-in classification keys (`research`, `setup`, `coding`, `testing`, `docs`, `deploy`, `delivery`) to your phase keys
+- `default_phase` — where unmatched operations go (default: first phase)
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
