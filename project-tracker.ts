@@ -27,7 +27,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { Plugin } from "@opencode-ai/plugin"
+import { type Plugin, tool } from "@opencode-ai/plugin"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -163,7 +163,7 @@ function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
 
 /* ── ساختار وضعیت ───────────────────────────────────────────────────────── */
 interface PhaseState { score: number; events: number; active: boolean }
-interface LogEvent { t: number; tool: string; phase: string; weight: number }
+interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string }
 interface State {
   project: string
   started_at: number
@@ -181,6 +181,8 @@ interface State {
     commits: number
     messages: number
     sessions: number
+    errors: number
+    successes: number
   }
   history: [number, number][]
   growth_rate_per_hour: number
@@ -202,6 +204,7 @@ const emptyState = (project: string, keys: string[]): State => {
     totals: {
       tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0,
       deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, sessions: 0,
+      errors: 0, successes: 0,
     },
     history: [[now, 0]],
     growth_rate_per_hour: 0,
@@ -271,6 +274,30 @@ function relTime(ts: number, now: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
+const esc = (s: string) => String(s).replace(/[<>&]/g, (c) => (c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;"))
+
+function describeTool(toolName: string, args: any, outText: string): { detail: string; status: string } {
+  const txt = String(outText || "").trim()
+  if (toolName === "bash") {
+    const cmd = String(args?.command || "")
+    const lines = txt.split("\n").map((l) => l.trim()).filter(Boolean)
+    const tail = lines.slice(-3).join(" | ")
+    const detail = (tail || cmd).slice(0, 160)
+    let status: string
+    const tr = txt.match(/test result: (ok|FAILED)/i)
+    if (tr) status = tr[1].toLowerCase() === "ok" ? "ok" : "error"
+    else if (/failed|failure|panic|fatal|cannot|not found|exception|✗|FAILED/i.test(txt + " " + cmd) && !/success|exited with code 0|passed/i.test(txt)) status = "error"
+    else if (/success|exited with code 0|passed|✅|✓|ok\./i.test(txt)) status = "ok"
+    else status = txt ? "ok" : "warn"
+    return { detail, status }
+  }
+  if (toolName === "edit" || toolName === "write" || toolName === "read") {
+    const f = String(args?.filePath || args?.path || toolName).split(/[\\/]/).pop()
+    return { detail: f || toolName, status: "ok" }
+  }
+  return { detail: "", status: "ok" }
+}
+
 /* ── گزارش Markdown ────────────────────────────────────────────────────── */
 function renderMd(state: State, phases: PhaseDef[], totalGoal: number, total: number): string {
   const rows = phases.map((p) => {
@@ -296,10 +323,14 @@ ${rows}
 ## آمار
 
 - ابزار: ${t.tool_calls} · ویرایش: ${t.edits} · تست: ${t.tests} · استقرار: ${t.deploys} · مستندات: ${t.docs} · کامیت: ${t.commits} · چت: ${t.messages} · نشست: ${t.sessions}
+- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors}
 
 ## آخرین فعالیت‌ها
 
-${state.log.slice(0, 10).map((e) => `- \`${e.tool}\` → ${phases.find((p) => p.key === e.phase)?.en || e.phase} (+${e.weight}) — ${new Date(e.t).toLocaleString()}`).join("\n") || "- (هیچ)"}
+${state.log.slice(0, 10).map((e) => {
+    const st = e.status === "error" ? "❌" : e.status === "ok" ? "✅" : e.status === "warn" ? "⚠️" : "•"
+    return `- ${st} \`${e.tool}\` → ${phases.find((p) => p.key === e.phase)?.en || e.phase} (+${e.weight}) — ${(e.detail || "").replace(/\|/g, "/")} — ${new Date(e.t).toLocaleString()}`
+  }).join("\n") || "- (هیچ)"}
 `
 }
 
@@ -400,14 +431,20 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     `<span data-en="${d.pct}%: ${d.en}" data-fa="${d.pct}٪: ${d.fa}">${d.pct}٪: ${d.fa}</span>`
   ).join("<br>")
 
+  const statusIcon: Record<string, string> = { ok: "✓", error: "✗", warn: "⚠", info: "•" }
+  const statusColor: Record<string, string> = { ok: "#34d399", error: "#fb7185", warn: "#fbbf24", info: "#8b93b8" }
+
   const logHtml = state.log.slice(0, 8).map((e) => {
     const p = phases.find((x) => x.key === e.phase)
     const rel = relTime(e.t, nowMs)
+    const st = e.status || "info"
     return `
     <div class="log-row">
-      <span class="dot" style="background:${p?.color || "#888"}"></span>
+      <span class="dot" style="background:${statusColor[st] || "#888"}"></span>
+      <span class="log-status" style="color:${statusColor[st] || "#888"}">${statusIcon[st] || "•"}</span>
       <span class="log-tool">${e.tool}</span>
       <span class="log-phase" data-en="${p?.en || e.phase}" data-fa="${p?.fa || e.phase}">${p?.fa || e.phase}</span>
+      <span class="log-detail" title="${esc(e.detail || "")}">${esc((e.detail || "").replace(/[\r\n\t]+/g, " ").slice(0, 80))}</span>
       <span class="log-w">+${e.weight}</span>
       <span class="log-t" data-en="${rel} ago" data-fa="${rel} قبل">${rel} قبل</span>
     </div>`
@@ -427,6 +464,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     ["Commits", "کامیت", String(t.commits), "#fb7185"],
     ["Messages", "پیام‌های چت", String(t.messages), "#818cf8"],
     ["Sessions", "نشست‌ها", String(t.sessions), "#38bdf8"],
+    ["Successes", "موفقیت‌ها", String(t.successes), "#34d399"],
+    ["Errors", "خطاها", String(t.errors), "#fb7185"],
   ]
   const statsHtml = stats.map(([en, fa, val, color]) => `
     <div class="stat" style="--acc:${color}">
@@ -522,6 +561,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .log-row.muted{color:var(--muted)}
   .dot{width:8px;height:8px;border-radius:99px;flex:none}
   .log-tool{font-weight:600;min-width:90px}
+  .log-status{font-weight:700;flex:none}
+  .log-detail{color:var(--txt);font-size:11.5px;flex:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .log-phase{color:var(--muted);flex:1}
   .log-w{color:#7df3c8;font-weight:600}
   .log-t{color:var(--muted);font-size:11px;white-space:nowrap}
@@ -780,6 +821,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
     "tool.execute.after": async (input: any, _output: any) => {
       try {
         const toolName = input?.tool
+        if (toolName === "tracker_note") return
         const cls = classify(toolName, input?.args)
         let phase = cls.phase
         const mapped = cfg.remap?.[phase] || phase
@@ -787,6 +829,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         phase = phaseKeys.has(mapped) ? mapped : cfg.default_phase && phaseKeys.has(cfg.default_phase) ? cfg.default_phase : (phases[0]?.key || mapped)
         let weight = cls.weight
         if (typeof cfg.weights[toolName] === "number") weight = cfg.weights[toolName]
+        const desc = describeTool(toolName, input?.args, _output?.output)
         const ph = state.phases[phase] || (state.phases[phase] = { score: 0, events: 0, active: false })
 
         ph.score += weight
@@ -803,8 +846,10 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         if (phase === "docs") totals.docs += 1
         if (phase === "research") totals.research += 1
         if (/\b(git commit|gh pr)\b/.test(String(input?.args?.command || ""))) totals.commits += 1
+        if (desc.status === "error") totals.errors += 1
+        if (desc.status === "ok") totals.successes += 1
 
-        state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight })
+        state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight, status: desc.status, detail: desc.detail })
         if (state.log.length > 100) state.log.pop()
 
         const total = totalScore()
@@ -837,6 +882,33 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
       try {
         if (String(input?.command || "") === "tracker") writeNow()
       } catch { /* noop */ }
+    },
+
+    tool: {
+      tracker_note: tool({
+        description: "Record a short progress note into the project tracker: a bug found, an error, a successful operation, a decision or any noteworthy event. Call this whenever something important happens during the task.",
+        args: {
+          text: tool.schema.string().describe("Short note, max ~140 characters"),
+          type: tool.schema.string().describe("One of: success, error, warning, info").optional(),
+        },
+        async execute(args: any) {
+          try {
+            const type = String(args?.type || "info")
+            const status = type === "success" ? "ok" : type === "error" ? "error" : type === "warning" ? "warn" : "info"
+            const detail = String(args?.text || "").slice(0, 140)
+            const activeKey = phases.find((p) => state.phases[p.key]?.active)?.key || phases[0]?.key || "coding"
+            state.log.unshift({ t: Date.now(), tool: "📝", phase: activeKey, weight: 0.5, status, detail })
+            if (state.log.length > 100) state.log.pop()
+            if (status === "error") state.totals.errors += 1
+            if (status === "ok") state.totals.successes += 1
+            dirty = true
+            flush()
+            return "✅ Note recorded in the project tracker."
+          } catch {
+            return "Note recording failed."
+          }
+        },
+      }),
     },
 
     dispose: async () => {
