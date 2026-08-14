@@ -61,6 +61,9 @@ checks["tools/list has 7 tools"] = ["tracker_note", "tracker_summary", "tracker_
 const note = await send("tools/call", { name: "tracker_note", arguments: { text: "deploy verified", type: "success" } }); // cwd = mcp-proj-a
 checks["tracker_note ok"] = !note.result?.isError && note.result?.content?.[0]?.text?.includes("✅");
 
+const noteP = await send("tools/call", { name: "tracker_note", arguments: { text: "staging released", type: "success", phase: "deploy", weight: 3 } });
+checks["tracker_note with phase+weight"] = !noteP.result?.isError && noteP.result?.content?.[0]?.text?.includes("+3") && JSON.parse(fs.readFileSync(path.join(rootA, ".opencode/project-tracker/state.json"), "utf8")).phases.deploy.score === 3;
+
 const init2 = await send("tools/call", { name: "tracker_init", arguments: { dir: rootB } });
 checks["tracker_init ok"] = !init2.result?.isError && init2.result?.content?.[0]?.text?.includes("mcp-proj-b");
 
@@ -86,7 +89,7 @@ const p2 = await send("tools/call", { name: "tracker_report", arguments: { proje
 checks["tracker_report regenerates"] = !p2.result?.isError && p2.result?.content?.[0]?.text?.includes("Dashboard regenerated") && p2.result?.content?.[0]?.text?.includes("mcp-proj-b");
 
 const stB = JSON.parse(fs.readFileSync(path.join(rootB, ".opencode/project-tracker/state.json"), "utf8"));
-checks["note landed in A (cwd)"] = JSON.parse(fs.readFileSync(path.join(rootA, ".opencode/project-tracker/state.json"), "utf8")).totals.verified === 1;
+checks["notes landed in A (cwd)"] = JSON.parse(fs.readFileSync(path.join(rootA, ".opencode/project-tracker/state.json"), "utf8")).totals.verified === 2;
 checks["B seeded from progress.json"] = stB.totals.seeded === 1;
 
 /* tracker_import_git — build a real git repo in a new dir */

@@ -19,12 +19,14 @@ let protocolVersion = "2025-06-18";
 const TOOLS = [
   {
     name: "tracker_note",
-    description: "Record a short progress note (bug found, error, success, decision, suggestion or solution).",
+    description: "Record a short progress note (bug found, error, success, decision, suggestion or solution). Optionally add score to a phase via phase+weight (e.g. retroactively recording completed work).",
     inputSchema: {
       type: "object",
       properties: {
         text: { type: "string", description: "Short note, max ~140 characters" },
         type: { type: "string", description: "success | error | warning | info | suggestion | solution | recommendation", enum: ["success", "error", "warning", "info", "suggestion", "solution", "recommendation"] },
+        phase: { type: "string", description: "Optional: phase key to add score to — research | setup | coding | testing | docs | deploy | delivery" },
+        weight: { type: "number", description: "Optional: score to add to that phase (default 0 — notes alone don't change percentages)" },
         project: { type: "string", description: "Optional: project name or path fragment (default: server working directory)" },
       },
       required: ["text"],
@@ -112,8 +114,9 @@ const callTool = async (name, args = {}) => {
       if (!args.text) return { error: "text is required" };
       const tr = resolveTracker(args);
       if (tr.error) return tr;
-      const r = tr.note(args.type || "info", args.text);
-      return r.ok ? { text: "✅ Note recorded." } : { error: r.error || "note failed" };
+      const r = tr.note(args.type || "info", args.text, { phase: args.phase, weight: args.weight });
+      const added = args.weight > 0 ? ` (phase ${args.phase}: +${args.weight})` : "";
+      return r.ok ? { text: `✅ Note recorded.${added}` } : { error: r.error || "note failed" };
     }
     case "tracker_summary": {
       const tr = resolveTracker(args);

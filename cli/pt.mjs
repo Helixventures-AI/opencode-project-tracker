@@ -72,13 +72,24 @@ const main = async () => {
     }
     case "note": {
       const type = first || "info";
-      const text = rest.slice(1).join(" ");
-      if (!text) { console.error("usage: pt note <type> <text>"); process.exit(1); }
+      let phase, weight;
+      const words = rest.slice(1);
+      const textParts = [];
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (w === "--phase") { phase = words[++i]; continue; }
+        if (w === "--weight") { weight = Number(words[++i]); continue; }
+        if (w.startsWith("--phase=")) { phase = w.slice(8); continue; }
+        if (w.startsWith("--weight=")) { weight = Number(w.slice(9)); continue; }
+        textParts.push(w);
+      }
+      const text = textParts.join(" ");
+      if (!text) { console.error("usage: pt note <type> <text> [--phase <phase>] [--weight <n>]"); process.exit(1); }
       const tr = createTracker({ root: process.cwd() });
       tr.init();
-      const r = tr.note(type, text);
+      const r = tr.note(type, text, { phase, weight });
       if (!r.ok) { console.error("error:", r.error); process.exit(1); }
-      console.log(`✅ Note recorded (${type})`);
+      console.log(`✅ Note recorded (${type})${weight > 0 ? ` — ${phase || "active phase"}: +${weight}` : ""}`);
       break;
     }
     case "report": {

@@ -8,7 +8,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { exec } from "node:child_process"
 
-export const VERSION = "1.4.1"
+export const VERSION = "1.4.2"
 
 export const PHASE_DEFAULTS = [
   { key: "research", en: "Research & Planning", fa: "پژوهش و برنامه‌ریزی", desc_en: "Requirements gathering, feasibility, architecture decisions, scope and roadmap.", desc_fa: "جمع‌آوری نیازمندی‌ها، امکان‌سنجی، تصمیم‌های معماری، دامنه و نقشهٔ راه.", goal: 15, color: "#38bdf8" },
@@ -1027,15 +1027,30 @@ export function createTracker({ root, globalDir } = {}) {
     }
   }
 
-  const note = (type, text) => {
+  const note = (type, text, opts = {}) => {
     try {
       const t = String(type || "info")
       const status = t === "success" ? "ok" : t === "error" ? "error" : t === "warning" ? "warn" : "info"
       const kind = ["suggestion", "solution", "recommendation"].includes(t) ? t : undefined
       const detail = String(text || "").slice(0, 140)
       const activeKey = phases.find((p) => state.phases[p.key]?.active)?.key || phases[0]?.key || "coding"
-      state.log.unshift({ t: Date.now(), tool: "📝", phase: activeKey, weight: 0.5, status, detail, kind })
+      let phaseKey = activeKey
+      if (opts?.phase) {
+        const p = phases.find((x) => x.key === String(opts.phase))
+        if (p) phaseKey = p.key
+      }
+      const weight = Math.max(0, Number(opts?.weight) || 0)
+      state.log.unshift({ t: Date.now(), tool: "📝", phase: phaseKey, weight: weight || 0.5, status, detail, kind })
       if (state.log.length > 100) state.log.pop()
+      if (weight > 0) {
+        const ph = state.phases[phaseKey] || (state.phases[phaseKey] = { score: 0, events: 0, active: false })
+        ph.score += weight
+        ph.events += 1
+        if (phaseKey === "testing") state.totals.tests += 1
+        if (phaseKey === "deploy") state.totals.deploys += 1
+        if (phaseKey === "docs") state.totals.docs += 1
+        if (phaseKey === "research") state.totals.research += 1
+      }
       if (status === "error") state.totals.errors += 1
       if (status === "ok") state.totals.successes += 1
       if (status === "ok") state.totals.verified += 1

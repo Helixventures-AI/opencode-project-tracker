@@ -103,6 +103,16 @@ or via MCP: `tracker_import_git` (args: `project`, `since`).
 
 Each commit maps to a phase by its message: `feat/fix/refactor` → Implementation, `test` → Testing & QA, `docs` → Documentation, `ci/deploy/docker/release` → Deployment, `merge/version` → Review & Delivery. Commits count as verified successes with their real timestamps (so the growth chart stays honest).
 
+### Notes with phase & weight (retroactive scoring)
+
+By default notes only add to the timeline. Pass an optional `phase` + `weight` to also add score to a phase (e.g. recording completed work that was done outside the tracker):
+
+```sh
+pt note success "staging released manually" --phase deploy --weight 3
+```
+
+MCP equivalent: `tracker_note` with `{ "text": "...", "type": "success", "phase": "deploy", "weight": 3 }`.
+
 ## How it works
 
 - Each tool call is classified into a phase with a weight (tests/deploys weigh more than reads).

@@ -140,6 +140,23 @@ r = tr.importGitCommits([{ hash: "a7", ts: Date.now(), subject: "docs: changelog
 s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
 checks["git import: new commit only added"] = r.imported === 1 && s.totals.commits === 7 && Math.abs(s.phases.docs.score - 2.4) < 0.001;
 
+/* 11) note with phase+weight */
+root = mk("proj-g");
+tr = createTracker({ root, globalDir: G });
+tr.init();
+const d0 = JSON.parse(fs.readFileSync(tr.stateFile, "utf8")).phases.deploy.score;
+tr.note("success", "deployed staging manually", { phase: "deploy", weight: 3 });
+s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
+checks["note +phase+weight adds score"] = Math.abs(s.phases.deploy.score - (d0 + 3)) < 0.001 && s.phases.deploy.events === 1;
+checks["note +phase+weight bumps deploys stat"] = s.totals.deploys === 1;
+checks["note success still verified"] = s.totals.verified === 1;
+tr.note("info", "plain note no score");
+s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
+checks["plain note unchanged (no score/events)"] = s.phases.deploy.events === 1 && Math.abs(s.phases.deploy.score - (d0 + 3)) < 0.001;
+tr.note("success", "invalid phase falls back", { phase: "nope", weight: 2 });
+s = JSON.parse(fs.readFileSync(tr.stateFile, "utf8"));
+checks["note invalid phase -> active phase fallback"] = s.phases.deploy.events === 1 && s.totals.verified === 2;
+
 let ok = true;
 for (const [k, v] of Object.entries(checks)) {
   console.log((v ? "PASS" : "FAIL") + "  " + k);
