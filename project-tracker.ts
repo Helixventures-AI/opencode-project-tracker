@@ -163,7 +163,7 @@ function effectivePhases(cfg: TrackerConfig): PhaseDef[] {
 
 /* ── ساختار وضعیت ───────────────────────────────────────────────────────── */
 interface PhaseState { score: number; events: number; active: boolean }
-interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string }
+interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string; kind?: string }
 interface State {
   project: string
   started_at: number
@@ -183,6 +183,7 @@ interface State {
     sessions: number
     errors: number
     successes: number
+    suggestions: number
   }
   history: [number, number][]
   growth_rate_per_hour: number
@@ -204,7 +205,7 @@ const emptyState = (project: string, keys: string[]): State => {
     totals: {
       tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0,
       deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, sessions: 0,
-      errors: 0, successes: 0,
+      errors: 0, successes: 0, suggestions: 0,
     },
     history: [[now, 0]],
     growth_rate_per_hour: 0,
@@ -298,6 +299,52 @@ function describeTool(toolName: string, args: any, outText: string): { detail: s
   return { detail: "", status: "ok" }
 }
 
+interface Insight { icon: string; fa: string; en: string; fixFa: string; fixEn: string }
+
+function buildInsights(state: State, phases: PhaseDef[]): Insight[] {
+  const ins: Insight[] = []
+  const t = state.totals
+  const errByPhase: Record<string, { count: number; last: string }> = {}
+  for (const e of state.log) {
+    if (e.status === "error") {
+      const cur = errByPhase[e.phase] || { count: 0, last: "" }
+      cur.count += 1
+      if (!cur.last) cur.last = e.detail || ""
+      errByPhase[e.phase] = cur
+    }
+  }
+  for (const [phase, info] of Object.entries(errByPhase)) {
+    const p = phases.find((x) => x.key === phase)
+    const d = info.last.toLowerCase()
+    let fixFa = "اجرای مجدد با خروجی کامل و بررسی لاگ"
+    let fixEn = "Re-run with full output and inspect the logs"
+    if (/test result: failed/i.test(d) || /fail/i.test(d)) { fixFa = "اجرای تستها با --nocapture و رفع اولین خطا؛ بررسی snapshot و متغیرهای محیط"; fixEn = "Run tests with --nocapture, fix the first failure; check snapshots and env vars" }
+    else if (/not found/i.test(d)) { fixFa = "بررسی مسیر فایل، نام ایمپورت/پکیج و نصب وابستگی"; fixEn = "Check the file path, import/package name and installed dependencies" }
+    else if (/denied|forbidden|permission/i.test(d)) { fixFa = "بررسی مجوزها، توکن‌ها و سطوح دسترسی"; fixEn = "Check permissions, tokens and access levels" }
+    else if (/panic|unwrap/i.test(d)) { fixFa = "بررسی مقادیر null/None و مدیریت خطا به‌جای unwrap"; fixEn = "Check for null/None values; replace unwrap with match or ok_or" }
+    else if (/port/i.test(d)) { fixFa = "بررسی اشغال پورت و تداخل سرویس‌ها"; fixEn = "Check port usage and service conflicts" }
+    else if (/timeout|connect/i.test(d)) { fixFa = "بررسی اتصال شبکه، آدرس سرویس و مهلت اتصال"; fixEn = "Check the network, service address and connection timeouts" }
+    ins.push({ icon: "❌", fa: `${info.count} خطا در فاز «${p?.fa || phase}» — آخرین: ${info.last.slice(0, 70)}`, en: `${info.count} errors in phase "${p?.en || phase}" — latest: ${info.last.slice(0, 70)}`, fixFa, fixEn })
+  }
+  const rate = t.tool_calls ? Math.round((t.errors / t.tool_calls) * 100) : 0
+  if (t.errors > 0 && rate >= 20) ins.push({ icon: "⚠️", fa: `نرخ خطا ${rate}٪ از کل عملیات`, en: `Error rate ${rate}% of all operations`, fixFa: "توقف و بررسی ریشه‌ای: بازتولید خطا، لاگ کامل، تست واحد روی همان مسیر", fixEn: "Stop and investigate: reproduce the error, get full logs, add a unit test on that path" })
+  if (t.tests === 0 && t.tool_calls >= 3) ins.push({ icon: "🧪", fa: "هنوز هیچ تستی اجرا نشده", en: "No test runs recorded yet", fixFa: "افزودن و اجرای تست برای فاز فعلی و ثبت نتیجه", fixEn: "Add and run tests for the current phase, then record the result" })
+  if (t.commits === 0 && t.edits > 0) ins.push({ icon: "💾", fa: `ویرایش‌ها (${t.edits}) بدون کامیت`, en: `${t.edits} edits without any commit`, fixFa: "کامیت منظم با پیام توصیفی و push", fixEn: "Commit regularly with descriptive messages and push" })
+  if (t.docs === 0) ins.push({ icon: "📚", fa: "مستندسازی انجام نشده", en: "No documentation ops yet", fixFa: "افزودن README/توضیح API و ثبت عملیات docs", fixEn: "Add README/API docs and record docs operations" })
+  for (const p of phases) {
+    const ph = state.phases[p.key]
+    if (ph && ph.events === 0 && p.goal > 0) ins.push({ icon: "🚀", fa: `فاز «${p.fa}» هنوز شروع نشده`, en: `Phase "${p.en}" not started yet`, fixFa: "برنامه‌ریزی گام اول این فاز و شروع کار", fixEn: "Plan the first step of this phase and get started" })
+  }
+  if (t.errors === 0 && t.tool_calls >= 3) ins.push({ icon: "✅", fa: "بدون خطا تا اینجا — روند عالی", en: "No errors so far — great pace", fixFa: "ادامه با همین کیفیت؛ افزودن تست برای پوشش بیشتر", fixEn: "Keep the pace; add more tests for better coverage" })
+  if (state.overall_pct >= 100) ins.push({ icon: "🎉", fa: "پروژه کامل شد", en: "Project completed", fixFa: "بستن فازها، بررسی نهایی و مستندسازی", fixEn: "Close out phases, final review and documentation" })
+  for (const e of state.log) {
+    if (e.kind === "suggestion" || e.kind === "solution" || e.kind === "recommendation") {
+      ins.unshift({ icon: e.kind === "solution" ? "🔧" : "💡", fa: e.detail, en: e.detail, fixFa: "", fixEn: "" })
+    }
+  }
+  return ins.slice(0, 6)
+}
+
 /* ── گزارش Markdown ────────────────────────────────────────────────────── */
 function renderMd(state: State, phases: PhaseDef[], totalGoal: number, total: number): string {
   const rows = phases.map((p) => {
@@ -323,7 +370,11 @@ ${rows}
 ## آمار
 
 - ابزار: ${t.tool_calls} · ویرایش: ${t.edits} · تست: ${t.tests} · استقرار: ${t.deploys} · مستندات: ${t.docs} · کامیت: ${t.commits} · چت: ${t.messages} · نشست: ${t.sessions}
-- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors}
+- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors} · 💡 پیشنهاد: ${t.suggestions}
+
+## توصیه‌ها و راهکارها
+
+${buildInsights(state, phases).map((r) => `- ${r.icon} ${r.fa}${r.fixFa ? `\n  - راهکار: ${r.fixFa}` : ""}`).join("\n") || "- (هیچ)"}
 
 ## آخرین فعالیت‌ها
 
@@ -352,6 +403,16 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const dateFa = new Date(state.updated_at).toLocaleString("fa-IR")
 
   const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
+
+  const recs = buildInsights(state, phases)
+  const recsHtml = recs.map((r) => `
+    <div class="rec-row">
+      <span class="rec-icon">${r.icon}</span>
+      <div class="rec-body">
+        <div class="rec-text" data-en="${esc(r.en)}" data-fa="${esc(r.fa)}">${esc(r.fa)}</div>
+        ${r.fixFa ? `<div class="rec-fix" data-en="Fix: ${esc(r.fixEn)}" data-fa="راهکار: ${esc(r.fixFa)}">راهکار: ${esc(r.fixFa)}</div>` : ""}
+      </div>
+    </div>`).join("") || `<div class="muted" data-en="No recommendations yet" data-fa="هنوز توصیه‌ای ثبت نشده">هنوز توصیه‌ای ثبت نشده</div>`
 
   const phasesHtml = phases.map((p, i) => {
     const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
@@ -466,6 +527,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     ["Sessions", "نشست‌ها", String(t.sessions), "#38bdf8"],
     ["Successes", "موفقیت‌ها", String(t.successes), "#34d399"],
     ["Errors", "خطاها", String(t.errors), "#fb7185"],
+    ["Research", "پژوهش", String(t.research), "#f59e0b"],
+    ["Suggestions", "پیشنهادها و راهکارها", String(t.suggestions), "#a3e635"],
   ]
   const statsHtml = stats.map(([en, fa, val, color]) => `
     <div class="stat" style="--acc:${color}">
@@ -563,6 +626,12 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .log-tool{font-weight:600;min-width:90px}
   .log-status{font-weight:700;flex:none}
   .log-detail{color:var(--txt);font-size:11.5px;flex:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .recs{display:flex;flex-direction:column;gap:8px}
+  .rec-row{display:flex;gap:10px;align-items:flex-start;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .rec-icon{font-size:15px;flex:none}
+  .rec-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .rec-text{font-size:12.5px;font-weight:500;line-height:1.6}
+  .rec-fix{font-size:11.5px;color:#a3e635;line-height:1.6}
   .log-phase{color:var(--muted);flex:1}
   .log-w{color:#7df3c8;font-weight:600}
   .log-t{color:var(--muted);font-size:11px;white-space:nowrap}
@@ -667,6 +736,10 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
         <div style="font-size:15px;font-weight:600;margin-bottom:14px" data-en="🧭 Project phases" data-fa="🧭 فازهای پروژه">🧭 فازهای پروژه</div>
         ${phasesHtml}
       </div>
+      <div class="card" style="margin-top:18px">
+        <div style="font-size:15px;font-weight:600;margin-bottom:14px" data-en="💡 Recommendations & Solutions" data-fa="💡 توصیه‌ها، پیشنهادات و راهکارها">💡 توصیه‌ها، پیشنهادات و راهکارها</div>
+        <div class="recs">${recsHtml}</div>
+      </div>
       <div class="stats">${statsHtml}</div>
       <div class="card" style="margin-top:18px">
         <div style="font-size:13px;margin-bottom:8px" data-en="🗂️ Other tracked projects" data-fa="🗂️ سایر پروژه‌های پیگیری‌شده">🗂️ سایر پروژه‌های پیگیری‌شده</div>
@@ -675,7 +748,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.2.1 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.2.1 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.2.1 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.3.2 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.2 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
@@ -886,21 +959,23 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
 
     tool: {
       tracker_note: tool({
-        description: "Record a short progress note into the project tracker: a bug found, an error, a successful operation, a decision or any noteworthy event. Call this whenever something important happens during the task.",
+        description: "Record a short progress note into the project tracker: a bug found, an error, a successful operation, a decision, a suggestion or a solution for a problem. Call this whenever something noteworthy happens during the task.",
         args: {
           text: tool.schema.string().describe("Short note, max ~140 characters"),
-          type: tool.schema.string().describe("One of: success, error, warning, info").optional(),
+          type: tool.schema.string().describe("One of: success, error, warning, info, suggestion, solution, recommendation").optional(),
         },
         async execute(args: any) {
           try {
             const type = String(args?.type || "info")
             const status = type === "success" ? "ok" : type === "error" ? "error" : type === "warning" ? "warn" : "info"
+            const kind = ["suggestion", "solution", "recommendation"].includes(type) ? type : undefined
             const detail = String(args?.text || "").slice(0, 140)
             const activeKey = phases.find((p) => state.phases[p.key]?.active)?.key || phases[0]?.key || "coding"
-            state.log.unshift({ t: Date.now(), tool: "📝", phase: activeKey, weight: 0.5, status, detail })
+            state.log.unshift({ t: Date.now(), tool: "📝", phase: activeKey, weight: 0.5, status, detail, kind })
             if (state.log.length > 100) state.log.pop()
             if (status === "error") state.totals.errors += 1
             if (status === "ok") state.totals.successes += 1
+            if (kind) state.totals.suggestions += 1
             dirty = true
             flush()
             return "✅ Note recorded in the project tracker."
