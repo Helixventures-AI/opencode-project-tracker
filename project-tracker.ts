@@ -211,15 +211,16 @@ function scanSeedFiles(root: string): string[] {
   return out
 }
 
-function parseSeedFile(filePath: string, phases: PhaseDef[]): SeedItem[] {
+function parseSeedFile(filePath: string, phases: PhaseDef[]): { items: SeedItem[]; skipped: number } {
   const items: SeedItem[] = []
+  let skipped = 0
   const pushItem = (id: string, phase: string, score: number, status: string, detail: string) => {
     const canon = findPhase(phases, phase)
-    if (!canon) return
+    if (!canon) { skipped += 1; return }
     items.push({ id, phase: canon, score, status, detail: String(detail || "").slice(0, 140) })
   }
   let raw = ""
-  try { raw = fs.readFileSync(filePath, "utf8") } catch { return items }
+  try { raw = fs.readFileSync(filePath, "utf8") } catch { return { items, skipped } }
   const isMd = /\.(md|markdown)$/i.test(filePath) || /^\s*[-*]\s*\[[ xX.oO]\]/m.test(raw) || /^#{1,3}\s/m.test(raw)
   if (isMd) {
     let cur = ""
@@ -239,7 +240,7 @@ function parseSeedFile(filePath: string, phases: PhaseDef[]): SeedItem[] {
       const done = /[xXoO]/.test(cl[1])
       pushItem("md:" + cur + ":" + normKey(text), cur, done ? 1 : 0, done ? "done" : "todo", text)
     }
-    return items
+    return { items, skipped }
   }
   let data: any = null
   try { data = JSON.parse(raw) } catch { return items }
@@ -247,7 +248,7 @@ function parseSeedFile(filePath: string, phases: PhaseDef[]): SeedItem[] {
     if (Array.isArray(data.steps)) data = data.steps
     else if (data.phases && typeof data.phases === "object") {
       for (const [k, v] of Object.entries(data.phases)) pushItem("map:" + k, k, typeof v === "number" ? v : 1, "done", k)
-      return items
+      return { items, skipped }
     }
   }
   if (Array.isArray(data)) {
@@ -261,7 +262,12 @@ function parseSeedFile(filePath: string, phases: PhaseDef[]): SeedItem[] {
       pushItem(it.id != null ? String(it.id) : "i" + i + ":" + normKey(detail), phase, score, done ? "done" : "todo", detail)
     })
   }
-  return items
+  return { items, skipped }
+}
+
+function addIssue(state: State, msg: string) {
+  state.issues.push({ t: Date.now(), msg: String(msg).slice(0, 200) })
+  if (state.issues.length > 20) state.issues.shift()
 }
 
 function seedState(state: State, phases: PhaseDef[], cfg: TrackerConfig, root: string): number {
@@ -273,10 +279,16 @@ function seedState(state: State, phases: PhaseDef[], cfg: TrackerConfig, root: s
       try { mtime = fs.statSync(filePath).mtimeMs } catch { continue }
       const entry = state.seeded[filePath] || { ids: [], mtime: 0 }
       if (entry.mtime === mtime) continue
-      const items = parseSeedFile(filePath, phases)
-      if (!items.length) continue
+      const res = parseSeedFile(filePath, phases)
+      if (!res.items.length) {
+        addIssue(state, `⚠️ ورود داده رد شد: «${path.basename(filePath)}» — فرمت ناشناخته یا فاز ناآشنا (${res.skipped} گام)`)
+        entry.mtime = mtime
+        state.seeded[filePath] = entry
+        continue
+      }
+      if (res.skipped > 0) addIssue(state, `⚠️ ${res.skipped} گام از «${path.basename(filePath)}» رد شد — فازشان با فازهای پروژه همخوانی ندارد`)
       const known = new Set(entry.ids)
-      for (const it of items) {
+      for (const it of res.items) {
         if (known.has(it.id)) continue
         known.add(it.id)
         const ph = state.phases[it.phase] || (state.phases[it.phase] = { score: 0, events: 0, active: false })
@@ -304,7 +316,7 @@ function seedState(state: State, phases: PhaseDef[], cfg: TrackerConfig, root: s
 
 /* ── ساختار وضعیت ───────────────────────────────────────────────────────── */
 interface PhaseState { score: number; events: number; active: boolean }
-interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string; kind?: string }
+interface LogEvent { t: number; tool: string; phase: string; weight: number; status: string; detail: string; kind?: string; verified?: boolean }
 interface State {
   project: string
   started_at: number
@@ -326,8 +338,10 @@ interface State {
     successes: number
     suggestions: number
     seeded: number
+    verified: number
   }
   seeded: Record<string, { ids: string[]; mtime: number }>
+  issues: { t: number; msg: string }[]
   history: [number, number][]
   growth_rate_per_hour: number
   eta_minutes: number | null
@@ -348,9 +362,10 @@ const emptyState = (project: string, keys: string[]): State => {
     totals: {
       tool_calls: 0, edits: 0, writes: 0, bash: 0, tests: 0,
       deploys: 0, docs: 0, research: 0, commits: 0, messages: 0, sessions: 0,
-      errors: 0, successes: 0, suggestions: 0, seeded: 0,
+      errors: 0, successes: 0, suggestions: 0, seeded: 0, verified: 0,
     },
     seeded: {},
+    issues: [],
     history: [[now, 0]],
     growth_rate_per_hour: 0,
     eta_minutes: null,
@@ -431,7 +446,7 @@ function describeTool(toolName: string, args: any, outText: string): { detail: s
     let status: string
     const tr = txt.match(/test result: (ok|FAILED)/i)
     if (tr) status = tr[1].toLowerCase() === "ok" ? "ok" : "error"
-    else if (/failed|failure|panic|fatal|cannot|not found|exception|✗|FAILED/i.test(txt + " " + cmd) && !/success|exited with code 0|passed/i.test(txt)) status = "error"
+    else if (/failed|failure|panic|fatal|cannot|not found|exception|denied|refused|forbidden|invalid|✗|FAILED|\berror\b/i.test(txt + " " + cmd) && !/success|exited with code 0|passed|no errors?|errors?: 0|errors?: none/i.test(txt)) status = "error"
     else if (/success|exited with code 0|passed|✅|✓|ok\./i.test(txt)) status = "ok"
     else status = txt ? "ok" : "warn"
     return { detail, status }
@@ -441,6 +456,23 @@ function describeTool(toolName: string, args: any, outText: string): { detail: s
     return { detail: f || toolName, status: "ok" }
   }
   return { detail: "", status: "ok" }
+}
+
+/* نتیجهٔ تأییدشدهٔ واقعی (تست سبز، بیلد موفق، دیپلوی) → امتیاز ویژه */
+function detectOutcome(toolName: string, args: any, outText: string, status: string): { bonus: number; msg: string } | null {
+  if (status !== "ok") return null
+  const txt = String(outText || "")
+  const cmd = String(args?.command || "")
+  if (toolName === "bash") {
+    const tr = txt.match(/test result: ok\.\s*(\d+)\s*passed/i)
+    if (tr) return { bonus: 2, msg: `تست تأیید شد: ${tr[1]} پاس` }
+    if (/test result: ok|tests? (all )?passed|passed/i.test(txt) && /test|cargo|pytest|npm test|go test|dotnet test/i.test(cmd)) return { bonus: 2, msg: "تست تأیید شد" }
+    if (/docker push|compose up|kubectl apply|helm install|deployed/i.test(cmd) && !/error|fail/i.test(txt)) return { bonus: 2, msg: "استقرار تأیید شد" }
+    if (/git (commit|push)|gh pr/i.test(cmd)) return { bonus: 1, msg: "کامیت/انتشار تأیید شد" }
+    if (/Finished/i.test(txt) && /build|compile|make/i.test(cmd) && !/test/i.test(cmd)) return { bonus: 1, msg: "بیلد موفق" }
+    if (/success|exited with code 0/i.test(txt) && /build|compile/i.test(cmd)) return { bonus: 1, msg: "بیلد موفق" }
+  }
+  return null
 }
 
 interface Insight { icon: string; fa: string; en: string; fixFa: string; fixEn: string }
@@ -472,6 +504,7 @@ function buildInsights(state: State, phases: PhaseDef[]): Insight[] {
   }
   const rate = t.tool_calls ? Math.round((t.errors / t.tool_calls) * 100) : 0
   if (t.errors > 0 && rate >= 20) ins.push({ icon: "⚠️", fa: `نرخ خطا ${rate}٪ از کل عملیات`, en: `Error rate ${rate}% of all operations`, fixFa: "توقف و بررسی ریشه‌ای: بازتولید خطا، لاگ کامل، تست واحد روی همان مسیر", fixEn: "Stop and investigate: reproduce the error, get full logs, add a unit test on that path" })
+  if (t.verified > 0) ins.push({ icon: "⭐", fa: `${t.verified} گام تأییدشده (تست سبز / بیلد و استقرار موفق)`, en: `${t.verified} verified outcomes (green tests / successful build & deploy)`, fixFa: "هر نتیجهٔ واقعی را با تست/بیلد بعدی تأیید کنید", fixEn: "Keep verifying every real outcome with the next test/build" })
   if (t.tests === 0 && t.tool_calls >= 3) ins.push({ icon: "🧪", fa: "هنوز هیچ تستی اجرا نشده", en: "No test runs recorded yet", fixFa: "افزودن و اجرای تست برای فاز فعلی و ثبت نتیجه", fixEn: "Add and run tests for the current phase, then record the result" })
   if (t.commits === 0 && t.edits > 0) ins.push({ icon: "💾", fa: `ویرایش‌ها (${t.edits}) بدون کامیت`, en: `${t.edits} edits without any commit`, fixFa: "کامیت منظم با پیام توصیفی و push", fixEn: "Commit regularly with descriptive messages and push" })
   if (t.docs === 0) ins.push({ icon: "📚", fa: "مستندسازی انجام نشده", en: "No documentation ops yet", fixFa: "افزودن README/توضیح API و ثبت عملیات docs", fixEn: "Add README/API docs and record docs operations" })
@@ -514,7 +547,11 @@ ${rows}
 ## آمار
 
 - ابزار: ${t.tool_calls} · ویرایش: ${t.edits} · تست: ${t.tests} · استقرار: ${t.deploys} · مستندات: ${t.docs} · کامیت: ${t.commits} · چت: ${t.messages} · نشست: ${t.sessions}
-- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors} · 💡 پیشنهاد: ${t.suggestions}${t.seeded > 0 ? ` · 📥 واردشده: ${t.seeded} گام (${Object.keys(state.seeded).map((p) => path.basename(p)).join("، ")})` : ""}
+- ✅ موفق: ${t.successes} · ❌ خطا: ${t.errors} · 💡 پیشنهاد: ${t.suggestions} · ⭐ تأییدشده: ${t.verified}${t.seeded > 0 ? ` · 📥 واردشده: ${t.seeded} گام (${Object.keys(state.seeded).map((p) => path.basename(p)).join("، ")})` : ""}
+
+${state.issues.length > 0 ? `## ⚠️ اخطارها و موارد نادیده‌شده
+
+${state.issues.slice(-5).map((i) => `- ${i.msg}`).join("\n")}` : ""}
 
 ## توصیه‌ها و راهکارها
 
@@ -552,6 +589,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   const seedLineHtml = state.totals.seeded > 0
     ? `<div class="seed-line" data-en="📥 Imported: ${state.totals.seeded} steps from ${seedEn}" data-fa="📥 واردشده: ${state.totals.seeded} گام از ${seedFa}">📥 واردشده: ${state.totals.seeded} گام از ${seedFa}</div>`
     : ""
+  const issuesHtml = state.issues.slice(-5).map((i) => `<div class="seed-line" style="color:#fbbf24">${esc(i.msg)}</div>`).join("")
 
   const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
 
@@ -653,7 +691,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     return `
     <div class="log-row">
       <span class="dot" style="background:${statusColor[st] || "#888"}"></span>
-      <span class="log-status" style="color:${statusColor[st] || "#888"}">${statusIcon[st] || "•"}</span>
+      <span class="log-status" style="color:${statusColor[st] || "#888"}">${statusIcon[st] || "•"}${e.verified ? "★" : ""}</span>
       <span class="log-tool">${e.tool}</span>
       <span class="log-phase" data-en="${p?.en || e.phase}" data-fa="${p?.fa || e.phase}">${p?.fa || e.phase}</span>
       <span class="log-detail" title="${esc(e.detail || "")}">${esc((e.detail || "").replace(/[\r\n\t]+/g, " ").slice(0, 80))}</span>
@@ -681,6 +719,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     ["Research", "پژوهش", String(t.research), "#f59e0b"],
     ["Suggestions", "پیشنهادها و راهکارها", String(t.suggestions), "#a3e635"],
     ["Imported", "گام‌های واردشده", String(t.seeded), "#22d3ee"],
+    ["Verified", "گام‌های تأییدشده", String(t.verified), "#4ade80"],
   ]
   const statsHtml = stats.map(([en, fa, val, color]) => `
     <div class="stat" style="--acc:${color}">
@@ -819,6 +858,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
       <div class="proj-name">🗂️ ${state.project}</div>
       <div class="rep-date" data-en="📅 Report date: ${dateEn}" data-fa="📅 تاریخ گزارش: ${dateFa}">📅 تاریخ گزارش: ${dateFa}</div>
       ${seedLineHtml}
+      ${issuesHtml}
       <div class="sub" data-en="${subEn}" data-fa="${subFa}">${subFa}</div>
     </div>
     <div class="pills">
@@ -901,7 +941,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.3.3 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.3 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.3 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.3.4 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.4 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.4 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
@@ -955,6 +995,12 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
   let dirty = false
   let lastFlush = 0
 
+  try {
+    if (fs.existsSync(projectCfgFile)) JSON.parse(fs.readFileSync(projectCfgFile, "utf8"))
+  } catch {
+    addIssue(state, "⚠️ config.json ناخوانا است — بخشی از تنظیمات اعمال نشده")
+  }
+
   const totalGoal = () => phases.reduce((s, p) => s + p.goal, 0)
   const totalScore = () => phases.reduce((s, p) => s + (state.phases[p.key]?.score || 0), 0)
 
@@ -970,6 +1016,8 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         if (!Array.isArray(state.milestones)) state.milestones = []
         if (!Array.isArray(state.log)) state.log = []
         if (!state.seeded || typeof state.seeded !== "object") state.seeded = {}
+        if (!Array.isArray(state.issues)) state.issues = []
+        if (typeof state.totals.verified !== "number") state.totals.verified = 0
       }
     } catch { /* state file corrupt → start fresh */ }
   }
@@ -1064,6 +1112,14 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         ph.events += 1
         for (const k of Object.keys(state.phases)) state.phases[k].active = k === phase
 
+        const outcome = detectOutcome(toolName, input?.args, _output?.output, desc.status)
+        let verified = false
+        if (outcome) {
+          ph.score += outcome.bonus
+          state.totals.verified += 1
+          verified = true
+        }
+
         const totals = state.totals
         totals.tool_calls += 1
         if (toolName === "edit") totals.edits += 1
@@ -1077,7 +1133,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         if (desc.status === "error") totals.errors += 1
         if (desc.status === "ok") totals.successes += 1
 
-        state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight, status: desc.status, detail: desc.detail })
+        state.log.unshift({ t: Date.now(), tool: toolName || "?", phase, weight: weight + (outcome?.bonus || 0), status: desc.status, detail: desc.detail, verified })
         if (state.log.length > 100) state.log.pop()
 
         const total = totalScore()
@@ -1133,6 +1189,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
             if (state.log.length > 100) state.log.pop()
             if (status === "error") state.totals.errors += 1
             if (status === "ok") state.totals.successes += 1
+            if (status === "ok") state.totals.verified += 1
             if (kind) state.totals.suggestions += 1
             dirty = true
             flush()
