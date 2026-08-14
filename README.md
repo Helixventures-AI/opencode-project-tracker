@@ -121,6 +121,24 @@ Use tracker_note with text: "fixed auth bug — token expiry" and type: "success
 
 Types: `success`, `error`, `warning`, `info`. Notes appear instantly in the activity log and count toward the error/success totals.
 
+## Recommendations & Solutions
+
+The dashboard has a **💡 Recommendations & Solutions** section that combines:
+
+1. **Automatic insights** — derived from the recorded data:
+   - ❌ errors grouped per phase, each with a targeted fix (failed tests → run with `--nocapture`; `not found` → check path/imports; denied → check permissions; `panic/unwrap` → null handling; ports, timeouts, etc.)
+   - ⚠️ high error-rate warning (≥ 20%)
+   - 🧪 missing tests, 💾 edits without commits, 📚 no documentation, 🚀 phases not started yet, ✅ healthy pace, 🎉 project complete
+
+2. **Agent suggestions & solutions** — record your own recommendations, they appear on top with 💡/🔧:
+
+```
+Use tracker_note with text: "prefer lockfile for reproducible builds" and type: "suggestion"
+Use tracker_note with text: "split the big query into two to fix the timeout" and type: "solution"
+```
+
+Types: `suggestion`, `solution`, `recommendation` (also visible as a stat card). The same list is included in `report.md`.
+
 ## Customization
 
 Edit `PHASE_DEFAULTS` in `project-tracker.ts` to change phase names, goals or colors.
