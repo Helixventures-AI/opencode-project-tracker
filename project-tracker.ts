@@ -477,7 +477,7 @@ function detectOutcome(toolName: string, args: any, outText: string, status: str
 
 interface Insight { icon: string; fa: string; en: string; fixFa: string; fixEn: string }
 
-function buildInsights(state: State, phases: PhaseDef[]): Insight[] {
+function buildInsights(state: State, phases: PhaseDef[], nowMs: number = Date.now()): Insight[] {
   const ins: Insight[] = []
   const t = state.totals
   const errByPhase: Record<string, { count: number; last: string }> = {}
@@ -504,6 +504,8 @@ function buildInsights(state: State, phases: PhaseDef[]): Insight[] {
   }
   const rate = t.tool_calls ? Math.round((t.errors / t.tool_calls) * 100) : 0
   if (t.errors > 0 && rate >= 20) ins.push({ icon: "⚠️", fa: `نرخ خطا ${rate}٪ از کل عملیات`, en: `Error rate ${rate}% of all operations`, fixFa: "توقف و بررسی ریشه‌ای: بازتولید خطا، لاگ کامل، تست واحد روی همان مسیر", fixEn: "Stop and investigate: reproduce the error, get full logs, add a unit test on that path" })
+  const idleH = Math.floor((nowMs - (state.updated_at || nowMs)) / 3_600_000)
+  if (t.tool_calls > 0 && idleH >= 2) ins.push({ icon: "⏸️", fa: `پروژه از ${idleH} ساعت پیش بدون فعالیت است`, en: `No activity for ${idleH} hours`, fixFa: "ادامهٔ کار روی فاز فعال و ثبت نتیجه", fixEn: "Resume work on the active phase and record the outcome" })
   if (t.verified > 0) ins.push({ icon: "⭐", fa: `${t.verified} گام تأییدشده (تست سبز / بیلد و استقرار موفق)`, en: `${t.verified} verified outcomes (green tests / successful build & deploy)`, fixFa: "هر نتیجهٔ واقعی را با تست/بیلد بعدی تأیید کنید", fixEn: "Keep verifying every real outcome with the next test/build" })
   if (t.tests === 0 && t.tool_calls >= 3) ins.push({ icon: "🧪", fa: "هنوز هیچ تستی اجرا نشده", en: "No test runs recorded yet", fixFa: "افزودن و اجرای تست برای فاز فعلی و ثبت نتیجه", fixEn: "Add and run tests for the current phase, then record the result" })
   if (t.commits === 0 && t.edits > 0) ins.push({ icon: "💾", fa: `ویرایش‌ها (${t.edits}) بدون کامیت`, en: `${t.edits} edits without any commit`, fixFa: "کامیت منظم با پیام توصیفی و push", fixEn: "Commit regularly with descriptive messages and push" })
@@ -523,8 +525,7 @@ function buildInsights(state: State, phases: PhaseDef[]): Insight[] {
 }
 
 /* ── گزارش Markdown ────────────────────────────────────────────────────── */
-function renderMd(state: State, phases: PhaseDef[], totalGoal: number, total: number): string {
-  const rows = phases.map((p) => {
+function renderMd(state: State, phases: PhaseDef[], totalGoal: number, total: number): string {  const rows = phases.map((p) => {
     const ps = state.phases[p.key] || { score: 0, events: 0, active: false }
     const pct = clampPct((ps.score / p.goal) * 100)
     const st = pct >= 100 ? "✅" : ps.active ? "🟡" : "⚪"
@@ -593,7 +594,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
 
   const faStatus: Record<string, string> = { done: "کامل", active: "فعال", idle: "در انتظار" }
 
-  const recs = buildInsights(state, phases)
+  const recs = buildInsights(state, phases, nowMs)
   const recsHtml = recs.map((r) => `
     <div class="rec-row">
       <span class="rec-icon">${r.icon}</span>
@@ -941,7 +942,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     </div>
   </div>
 
-  <footer data-en="opencode Project Tracker v1.3.4 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.4 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.4 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
+  <footer data-en="opencode Project Tracker v1.3.5 — data stored locally in ${dir} · state.json · report.html · report.md" data-fa="opencode Project Tracker v1.3.5 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md">opencode Project Tracker v1.3.5 — داده‌ها به‌صورت محلی در ${dir} ذخیره می‌شود · state.json · report.html · report.md</footer>
 </div>
 <script>
 var I18N = {
@@ -1019,7 +1020,13 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         if (!Array.isArray(state.issues)) state.issues = []
         if (typeof state.totals.verified !== "number") state.totals.verified = 0
       }
-    } catch { /* state file corrupt → start fresh */ }
+    } catch {
+      try {
+        const backup = `${stateFile}.corrupt-${Date.now()}`
+        fs.renameSync(stateFile, backup)
+        addIssue(state, `⚠️ state.json خراب بود — نسخهٔ پشتیبان «${path.basename(backup)}» ساخته شد و شمارش از نو آغاز شد`)
+      } catch { /* noop */ }
+    }
   }
 
   const updateGlobalProjects = () => {
@@ -1049,10 +1056,10 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
       cfg = loadConfig(globalCfgFile, projectCfgFile)
       phases = effectivePhases(cfg)
       for (const p of phases) if (!state.phases[p.key]) state.phases[p.key] = { score: 0, events: 0, active: false }
-      state.updated_at = Date.now()
       state.growth_rate_per_hour = growthRate(state.history)
       state.overall_pct = clampPct((totalScore() / totalGoal()) * 100)
       state.eta_minutes = computeEta(totalScore(), totalGoal(), state.growth_rate_per_hour)
+      checkMilestones()
       if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
       fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
       fs.writeFileSync(htmlFile, renderHtml(state, phases, outDir, readOtherProjects()))
@@ -1140,6 +1147,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
         pushHistory(total)
         state.overall_pct = clampPct((total / totalGoal()) * 100)
         checkMilestones()
+        state.updated_at = Date.now()
         dirty = true
         flush()
       } catch { /* noop */ }
@@ -1149,6 +1157,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
       try {
         if (output?.message?.role === "user") {
           state.totals.messages += 1
+          state.updated_at = Date.now()
           dirty = true
           flush()
         }
@@ -1191,6 +1200,7 @@ const plugin: Plugin = async ({ project, directory, worktree }) => {
             if (status === "ok") state.totals.successes += 1
             if (status === "ok") state.totals.verified += 1
             if (kind) state.totals.suggestions += 1
+            state.updated_at = Date.now()
             dirty = true
             flush()
             return "✅ Note recorded in the project tracker."
