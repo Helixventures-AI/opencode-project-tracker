@@ -6,12 +6,16 @@
   "bin": {
     "pt": "cli/pt.mjs"
   },
-  "main": "./core/tracker-core.mjs",
+  "main": "./project-tracker.ts",
   "exports": {
-    ".": "./core/tracker-core.mjs",
+    ".": "./project-tracker.ts",
+    "./core": "./core/tracker-core.mjs",
     "./mcp": "./mcp/server.mjs",
     "./cli": "./cli/pt.mjs",
     "./plugin": "./project-tracker.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "next"
   },
   "files": [
     "core/",
@@ -29,6 +33,7 @@
   ],
   "keywords": [
     "opencode",
+    "opencode-plugin",
     "plugin",
     "claude-code",
     "mcp",
