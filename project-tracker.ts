@@ -744,7 +744,6 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     <div class="stat" style="--acc:${color}">
       <span class="stat-val">${val}</span>
       <span class="stat-label" data-en="${en}" data-fa="${fa}">${fa}</span>
-      <span class="stat-fa">${fa}</span>
     </div>`).join("")
 
   const descLines = phases.map((p) =>
@@ -801,7 +800,6 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .stat{background:var(--glass);border:1px solid var(--stroke);border-radius:14px;padding:12px}
   .stat-val{font-size:19px;font-weight:700;color:var(--acc,#22d3ee)}
   .stat-label{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
-  .stat-fa{display:block;font-size:11px;color:var(--muted);direction:rtl}
   .chart{margin-top:18px}
   .chart svg{width:100%;height:auto;border-radius:12px}
   .chart-grid{stroke:rgba(255,255,255,.05);stroke-width:1}
@@ -860,7 +858,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
     .card{background:#fff;backdrop-filter:none;border:1px solid #ddd;break-inside:avoid}
     h1{color:#111;background:none;-webkit-background-clip:unset}
     .proj-name{color:#0a7d52}
-    .sub,.rep-date,.stat-fa,.phase-desc,.phase-meta,.log-t,.log-phase,.ms-legend,footer{color:#555}    .stat-val{color:#0a7d52}
+    .sub,.rep-date,.phase-desc,.phase-meta,.log-t,.log-phase,.ms-legend,footer{color:#555}    .stat-val{color:#0a7d52}
     .pct{color:#111}
     .bar{background:#e5e7eb}
     .status-chip{border-color:#ccc}
@@ -984,8 +982,6 @@ function apply() {
   for (var i = 0; i < els.length; i++) { els[i].textContent = lang === 'fa' ? els[i].getAttribute('data-fa') : els[i].getAttribute('data-en'); }
   var htmlEls = document.querySelectorAll('[data-html-en]');
   for (var j = 0; j < htmlEls.length; j++) { htmlEls[j].innerHTML = lang === 'fa' ? htmlEls[j].getAttribute('data-html-fa') : htmlEls[j].getAttribute('data-html-en'); }
-  var faEls = document.querySelectorAll('.stat-fa');
-  for (var k = 0; k < faEls.length; k++) { faEls[k].style.display = lang === 'fa' ? '' : 'none'; }
   document.getElementById('langBtn').textContent = lang === 'fa' ? 'English' : 'فارسی';
 }
 function toggleLang() {

@@ -32,6 +32,7 @@ checks["verified=3 (test+commit+push)"] = s.totals.verified === 3;
 checks["deploy bonus +2 (4.5)"] = Math.abs(s.phases.deploy.score - 4.5) < 0.001;
 checks["milestones from 100%? overall<100 → no"] = JSON.stringify(s.milestones) === "[]";
 checks["growth stored"] = typeof s.growth_rate_per_hour === "number";
+checks["no duplicate stat label"] = !fs.readFileSync(path.join(root, ".opencode/project-tracker/report.html"), "utf8").includes("stat-fa") && fs.readFileSync(path.join(root, ".opencode/project-tracker/report.html"), "utf8").split('data-fa="عملیات ابزار"').length === 2;
 checks["15 stat cards in html"] = (fs.readFileSync(path.join(root, ".opencode/project-tracker/report.html"), "utf8").match(/class="stat"/g) || []).length === 15;
 
 /* 2) seed from JSON + MD + idempotent */
