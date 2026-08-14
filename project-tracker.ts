@@ -476,7 +476,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .ms-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
   .ms-chip{font-size:11px;padding:4px 12px;border-radius:999px;border:1px solid var(--acc);color:var(--acc,#22d3ee);background:rgba(255,255,255,.04);cursor:help}
   .ms-chip.dim{opacity:.35;color:var(--muted);border-color:var(--stroke)}
-  .ms-legend{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.9;direction:rtl;text-align:right}
+  .ms-legend{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.9}
+  body.lang-fa .ms-legend{direction:rtl;text-align:right}
   .ms-legend span{display:block}
   .phase-card{background:var(--glass);border:1px solid var(--stroke);border-radius:14px;padding:14px;margin-bottom:12px}
   .phase-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -487,7 +488,8 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .status-chip.done{color:#7df3c8;border-color:rgba(125,243,200,.35);background:rgba(125,243,200,.08)}
   .status-chip.active{color:#fde68a;border-color:rgba(253,230,138,.35);background:rgba(253,230,138,.08)}
   .status-chip.idle{color:var(--muted)}
-  .phase-desc{font-size:12px;color:var(--muted);margin:8px 0 10px;direction:rtl;text-align:right;line-height:1.7}
+  .phase-desc{font-size:12px;color:var(--muted);margin:8px 0 10px;line-height:1.7}
+  body.lang-fa .phase-desc{direction:rtl;text-align:right}
   .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden}
   .bar-fill{height:100%;border-radius:99px;transition:width .8s ease}
   .bar.mini{height:5px;flex:1;min-width:60px}
@@ -504,11 +506,25 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
   .other-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px}
   .other-row b{color:#22d3ee;min-width:38px;text-align:left}
   .other-row span{min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  footer{margin-top:20px;text-align:center;color:var(--muted);font-size:11.5px;direction:rtl}
+  footer{margin-top:20px;text-align:center;color:var(--muted);font-size:11.5px}
+  body.lang-fa footer{direction:rtl}
   .btn{background:var(--grad);border:none;color:#0b0f1f;font-weight:700;padding:8px 18px;border-radius:999px;cursor:pointer;font-size:12.5px}
   .btn.ghost{background:transparent;border:1px solid var(--stroke);color:var(--txt);font-weight:500}
   .tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
   .lang-btn{font-size:13px}
+  @media print{
+    body{background:#fff;color:#111;padding:10px}
+    .card{background:#fff;backdrop-filter:none;border:1px solid #ddd;break-inside:avoid}
+    h1{color:#111;background:none;-webkit-background-clip:unset}
+    .proj-name{color:#0a7d52}
+    .sub,.rep-date,.stat-fa,.phase-desc,.phase-meta,.log-t,.log-phase,.ms-legend,footer{color:#555}
+    .stat-val{color:#0a7d52}
+    .pct{color:#111}
+    .bar{background:#e5e7eb}
+    .status-chip{border-color:#ccc}
+    .ms-chip.dim{opacity:.3}
+    .chart svg{max-width:100%}
+  }
 </style>
 </head>
 <body>
@@ -559,7 +575,7 @@ function renderHtml(state: State, phases: PhaseDef[], dir: string, otherProjects
           <button class="btn" onclick="document.getElementById('desc').hidden=!document.getElementById('desc').hidden" data-en="Phase descriptions" data-fa="تشریح مراحل">تشریح مراحل</button>
           <button class="btn ghost" onclick="window.print()" data-en="Print / PDF" data-fa="چاپ / PDF">چاپ / PDF</button>
         </div>
-        <div id="desc" hidden style="margin-top:12px;font-size:12px;color:var(--muted);direction:rtl;line-height:2">
+        <div id="desc" hidden style="margin-top:12px;font-size:12px;color:var(--muted);line-height:2">
           ${descLines}
         </div>
       </div>
@@ -607,6 +623,7 @@ try { lang = localStorage.getItem('pt_lang') || 'fa'; } catch (e) { lang = 'fa';
 function apply() {
   document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
   document.documentElement.lang = lang === 'fa' ? 'fa' : 'en';
+  document.body.className = 'lang-' + lang;
   var els = document.querySelectorAll('[data-en]');
   for (var i = 0; i < els.length; i++) { els[i].textContent = lang === 'fa' ? els[i].getAttribute('data-fa') : els[i].getAttribute('data-en'); }
   var htmlEls = document.querySelectorAll('[data-html-en]');
