@@ -1,0 +1,11 @@
+{
+  "name": "Acme Engineering",
+  "logo": "🏗️",
+  "tagline": "Engineering Progress Dashboard",
+  "colors": {
+    "accent": "#f59e0b",
+    "bg1": "#0c0a09",
+    "bg2": "#1c1917",
+    "grad": "linear-gradient(135deg,#f59e0b,#ef4444)"
+  }
+}
